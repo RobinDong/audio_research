@@ -1,4 +1,3 @@
-import glob
 import numpy as np
 
 from pathlib import Path
@@ -8,9 +7,9 @@ FRAMES_PER_SEC = 62.6
 FRAMES_WIN = int(FRAMES_PER_SEC * 2)  # 2 seconds
 
 
-class AudioSetDataset(Dataset):
-    def __init__(self, npy_dir: str, meta_dir: str, validation: bool = False):
-        self.file_lst = glob.glob(f"{npy_dir}/*.npy")
+class ESC50Dataset(Dataset):
+    def __init__(self, npy_list: str, meta_dir: str, validation: bool = False):
+        self.file_lst = npy_list
         self.validation = validation
         self.category_map = self.load_meta(meta_dir)
 
@@ -49,11 +48,15 @@ class AudioSetDataset(Dataset):
 
 
 if __name__ == "__main__":
-    ds = AudioSetDataset(
-        "/Users/robin/Downloads/ESC-50-master/npy",
+    ds = ESC50Dataset(
+        [
+            "/Users/robin/Downloads/ESC-50-master/npy/1-100032-A-0.npy",
+            "/Users/robin/Downloads/ESC-50-master/npy/2-126433-A-17.npy",
+            "/Users/robin/Downloads/ESC-50-master/npy/5-253094-D-49.npy",
+        ],
         "/Users/robin/Downloads/ESC-50-master/meta/",
     )
-    sound, label = ds[1023]
+    sound, label = ds[2]
     print(sound.shape, label)
-    sound, label = ds[123]
+    sound, label = ds[0]
     print(sound.shape, label)
