@@ -38,7 +38,11 @@ class Trainer:
         self.train_loader = self.val_loader = None
 
     def criterion(self, outputs, targets):
-        one_hot = torch.zeros((targets.shape[0], self.config.num_classes), dtype=self.dtype, device=self.device_type)
+        one_hot = torch.zeros(
+            (targets.shape[0], self.config.num_classes),
+            dtype=self.dtype,
+            device=self.device_type,
+        )
         one_hot.fill_((1 - LABEL_SMOOTH_RATIO) / self.config.num_classes)
         one_hot.scatter_(1, targets.unsqueeze(-1), LABEL_SMOOTH_RATIO)
         return torch.sum(-one_hot * F.log_softmax(outputs, -1), -1).mean()
@@ -53,13 +57,15 @@ class Trainer:
             self.train_batch_iter = iter(self.train_loader)
             data_entry = next(self.train_batch_iter)
 
-        sounds, label = data_entry
-        sounds = sounds.unsqueeze(-1).permute(0, 3, 1, 2).to(self.dtype).to(self.device_type)
-        label = label.to(self.device_type)
+        sounds, labels = data_entry
+        sounds = (
+            sounds.unsqueeze(-1).permute(0, 3, 1, 2).to(self.dtype).to(self.device_type)
+        )
+        labels = labels.to(self.device_type)
 
         with self.ctx:
             out = model(sounds)
-            loss = self.criterion(out, label)
+            loss = self.criterion(out, labels)
 
         self.scaler.scale(loss).backward()
         self.scaler.unscale_(optimizer)
@@ -86,6 +92,32 @@ class Trainer:
         coeff = 0.5 * (1.0 + math.cos(math.pi * decay_ratio))  # coeff ranges 0..1
         return config.min_lr + coeff * (config.lr - config.min_lr)
 
+    @staticmethod
+    def get_accuracy(out, target):
+        _, predict = torch.max(out, dim=-1)
+        correct = predict == target
+        accuracy = correct.sum().item() / correct.size(0)
+        return accuracy
+
+    def get_validation_metrics(self, data_entry, model):
+        sounds, labels = data_entry
+        sounds = (
+            sounds.unsqueeze(-1).permute(0, 3, 1, 2).to(self.dtype).to(self.device_type)
+        )
+        labels = labels.to(self.device_type)
+        # forward
+        with self.ctx:
+            out = model(sounds)
+            loss = self.criterion(out, labels)
+        # accuracy
+        accuracy = self.get_accuracy(out, labels)
+        return OrderedDict(
+            [
+                ("loss", loss.item()),
+                ("accuracy", accuracy),
+            ]
+        )
+
     @torch.no_grad()
     def validate(self, cmodel):
         cmodel.eval()
@@ -95,9 +127,7 @@ class Trainer:
         length = len(self.val_loader)
         for _ in range(length - 1):
             data_entry = next(batch_iter)
-            metrics = self.train_provider.get_validation_metrics(
-                data_entry, cmodel, self.ctx, self.device_type
-            )
+            metrics = self.get_validation_metrics(data_entry, cmodel)
             for key, val in metrics.items():
                 accumulator[key] += val
 
@@ -109,13 +139,17 @@ class Trainer:
 
     def init(self, resume: str):
         # create/load model
-        model = timm.create_model(
-            "convnextv2_atto",
-            in_chans=1,
-            num_classes=config.num_classes,
-            drop_rate=0,
-            drop_path_rate=0,
-        ).to(self.dtype).to(self.device_type)
+        model = (
+            timm.create_model(
+                "convnextv2_atto",
+                in_chans=1,
+                num_classes=config.num_classes,
+                drop_rate=0,
+                drop_path_rate=0,
+            )
+            .to(self.dtype)
+            .to(self.device_type)
+        )
         if resume:
             checkpoint = torch.load(resume, map_location=self.device_type)
             state_dict = checkpoint["model"]
