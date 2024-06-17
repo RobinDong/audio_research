@@ -74,7 +74,7 @@ class Trainer:
         self.scaler.update()
         optimizer.zero_grad(set_to_none=True)
 
-        return out, loss
+        return out, labels, loss
 
     def get_lr(self, iteration):
         config = self.config
@@ -125,7 +125,7 @@ class Trainer:
         batch_iter = iter(self.val_loader)
         accumulator = defaultdict(float)
         length = len(self.val_loader)
-        for _ in range(length - 1):
+        for _ in range(length):
             data_entry = next(batch_iter)
             metrics = self.get_validation_metrics(data_entry, cmodel)
             for key, val in metrics.items():
@@ -166,7 +166,7 @@ class Trainer:
         np.random.seed(SEED)
         np.random.shuffle(file_list)
         point = int(len(file_list) * self.config.eval_ratio)
-        train_lst, val_lst = file_list[:point], file_list[point:]
+        train_lst, val_lst = file_list[point:], file_list[:point]
         train_ds = ESC50Dataset(train_lst, self.config.meta_dir)
         val_ds = ESC50Dataset(val_lst, self.config.meta_dir, validation=True)
         self.train_loader = data.DataLoader(
@@ -192,7 +192,7 @@ class Trainer:
         if learning_rate:
             self.config.lr = learning_rate
             iter_start = 0
-        # cmodel = torch.compile(model)
+        cmodel = torch.compile(model)
         cmodel = model
         optimizer = torch.optim.AdamW(
             cmodel.parameters(),
@@ -208,12 +208,13 @@ class Trainer:
             for param_group in optimizer.param_groups:
                 param_group["lr"] = lr
 
-            out, loss = self.train_step(cmodel, optimizer)
+            out, labels, loss = self.train_step(cmodel, optimizer)
 
             if iteration % self.config.log_iters == 0 and iteration > 0:
                 metrics = OrderedDict(
                     [
                         ("loss", loss.item()),
+                        ("accuracy", self.get_accuracy(out, labels)),
                     ],
                 )
                 epoch = iteration // len(self.train_loader)
