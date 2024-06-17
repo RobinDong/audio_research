@@ -35,15 +35,16 @@ class ESC50Dataset(Dataset):
             print(ex)
             print(f"Failed to load {filename}")
 
-        len_sound = len(sound)
-        assert len_sound >= FRAMES_WIN
+        len_sound = sound.shape[1]
+        assert len_sound >= FRAMES_WIN, sound.shape
 
         if self.validation:
             start = 0
         else:
             start = np.random.randint(len_sound - FRAMES_WIN)
 
-        sound = sound[:, start : start + FRAMES_WIN].astype(np.float16)
+        #sound = sound[:, start : start + FRAMES_WIN].astype(np.float32)
+        sound = sound.astype(np.float32)
         return sound, self.category_map[Path(filename).stem]
 
 

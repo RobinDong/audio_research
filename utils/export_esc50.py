@@ -24,13 +24,13 @@ class ESC50Exporter:
             data = librosa.resample(data, orig_sr=sr, target_sr=TARGET_SR)
             # We use 20Hz to 20kHz as the range of human hearing
             spectro = librosa.feature.melspectrogram(
-                y=data, sr=sr, n_mels=NR_MELS, fmin=FMIN, fmax=FMAX
+                y=data, sr=sr, n_mels=NR_MELS, fmin=FMIN, fmax=FMAX, hop_length=512
             )
-            s_db = librosa.power_to_db(spectro, ref=np.max)
-
-            means = s_db.mean()
-            stds = s_db.std()
-            normalized = (s_db - means) / stds
+            logamplitude = librosa.amplitude_to_db(spectro)
+            mfcc = librosa.feature.mfcc(S=logamplitude, n_mfcc=39)
+            means = mfcc.mean()
+            stds = mfcc.std()
+            normalized = (mfcc - means) / stds
             normalized = normalized.astype(np.float16)
 
             new_name = Path(filename).stem + ".npy"
