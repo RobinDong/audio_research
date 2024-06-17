@@ -2,7 +2,6 @@ import os
 import glob
 import time
 import math
-import fire
 import timm
 import contextlib
 import numpy as np
@@ -137,6 +136,40 @@ class Trainer:
         cmodel.train()
         return accumulator
 
+    def load_dataset(self):
+        file_list = glob.glob(f"{self.config.data_path}/*.npy")
+        assert len(file_list) > 0
+        if self.config.dataset_name == "ESC-50":
+            file_set = set(file_list)
+            val_set = set(
+                glob.glob(f"{self.config.data_path}/{self.config.eval_prefix}*.npy")
+            )
+            train_set = file_set - val_set
+            train_ds = ESC50Dataset(list(train_set), self.config.meta_dir)
+            val_ds = ESC50Dataset(list(val_set), self.config.meta_dir, validation=True)
+        else:
+            point = int(len(file_list) * self.config.eval_ratio)
+            train_lst, val_lst = file_list[point:], file_list[:point]
+            np.random.seed(SEED)
+            np.random.shuffle(file_list)
+
+        self.train_loader = data.DataLoader(
+            train_ds,
+            self.config.batch_size,
+            num_workers=self.config.num_workers,
+            shuffle=True,
+            pin_memory=True,
+        )
+        self.train_batch_iter = iter(self.train_loader)
+
+        self.val_loader = data.DataLoader(
+            val_ds,
+            self.config.batch_size,
+            num_workers=self.config.num_workers,
+            shuffle=False,
+            pin_memory=True,
+        )
+
     def init(self, resume: str):
         # create/load model
         model = (
@@ -160,31 +193,7 @@ class Trainer:
         else:
             iter_start = 1
 
-        # load dataset
-        file_list = glob.glob(f"{self.config.data_path}/*.npy")
-        assert len(file_list) > 0
-        np.random.seed(SEED)
-        np.random.shuffle(file_list)
-        point = int(len(file_list) * self.config.eval_ratio)
-        train_lst, val_lst = file_list[point:], file_list[:point]
-        train_ds = ESC50Dataset(train_lst, self.config.meta_dir)
-        val_ds = ESC50Dataset(val_lst, self.config.meta_dir, validation=True)
-        self.train_loader = data.DataLoader(
-            train_ds,
-            self.config.batch_size,
-            num_workers=self.config.num_workers,
-            shuffle=True,
-            pin_memory=True,
-        )
-        self.train_batch_iter = iter(self.train_loader)
-
-        self.val_loader = data.DataLoader(
-            val_ds,
-            self.config.batch_size,
-            num_workers=self.config.num_workers,
-            shuffle=False,
-            pin_memory=True,
-        )
+        self.load_dataset()
         return model, iter_start
 
     def train(self, resume="", learning_rate=None):
@@ -201,6 +210,7 @@ class Trainer:
             amsgrad=True,
         )
 
+        best_accuracy = 0.0
         begin = time.time()
 
         for iteration in range(iter_start, self.config.max_iters):
@@ -229,12 +239,13 @@ class Trainer:
                 print(" ".join(messages), flush=True)
             if iteration % self.config.eval_iters == 0 and iteration > 0:
                 accumulator = self.validate(cmodel)
-                avg_accuracy = accumulator["accuracy"]
+                val_accuracy = accumulator["accuracy"]
+                best_accuracy = max(best_accuracy, val_accuracy)
                 checkpoint = {
                     "model": model.state_dict(),
                     "iteration": iteration,
                     "train_config": asdict(self.config),
-                    "eval_accuracy": avg_accuracy,
+                    "eval_accuracy": val_accuracy,
                 }
                 torch.save(
                     checkpoint,
@@ -248,12 +259,19 @@ class Trainer:
                     messages.append(f"{name}: {val:.3f}")
                 print(" ".join(messages), flush=True)
 
+        print("Best validating accuracy:", best_accuracy)
+        return best_accuracy
+
 
 if __name__ == "__main__":
     torch.backends.cudnn.benchmark = True
     torch.backends.cudnn.enabled = True
 
     config = TrainConfig()
-    trainer = Trainer(config)
-
-    fire.Fire(trainer.train)
+    if config.dataset_name == "ESC-50":
+        bests = []
+        for prefix in ["1", "2", "3", "4", "5"]:
+            config.eval_prefix = prefix
+            trainer = Trainer(config)
+            bests.append(trainer.train())
+        print("Avg accuracy:", sum(bests) / len(bests))

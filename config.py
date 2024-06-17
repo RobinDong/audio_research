@@ -16,3 +16,5 @@ class TrainConfig:
     lr_decay_iters: int = 6000
     max_iters: int = lr_decay_iters
     num_classes: int = 50
+    dataset_name: str = "ESC-50"
+    eval_prefix: str = "1"  # only for ESC-50
