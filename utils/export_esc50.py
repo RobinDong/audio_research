@@ -10,8 +10,7 @@ from tqdm import tqdm
 NR_MELS = 128
 FMIN = 20
 FMAX = 20000
-QUANT_RANGE = 4  # range (-4, 4)
-QUANT_GRANU = 256  # 8bit
+QUANT_RANGE = [-4.0, 4.0]  # range (-4, 4)
 TARGET_SR = 32000
 
 
@@ -32,10 +31,7 @@ class ESC50Exporter:
             means = s_db.mean()
             stds = s_db.std()
             normalized = (s_db - means) / stds
-            # range (-4, 4)
-            normalized = (
-                (normalized + QUANT_RANGE) * QUANT_GRANU * 2 / QUANT_RANGE
-            ).astype(np.uint8)
+            normalized = normalized.astype(np.float16)
 
             new_name = Path(filename).stem + ".npy"
             with open(f"{npy_dir}/{new_name}", "wb") as fp:
