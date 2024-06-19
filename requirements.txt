@@ -1,5 +1,5 @@
 librosa
 fire
-numpy
+numpy==1.26.4
 timm
 tqdm

@@ -27,7 +27,7 @@ class ESC50Exporter:
                 y=data, sr=sr, n_mels=NR_MELS, fmin=FMIN, fmax=FMAX, hop_length=512
             )
             logamplitude = librosa.amplitude_to_db(spectro)
-            mfcc = librosa.feature.mfcc(S=logamplitude, n_mfcc=39)
+            mfcc = librosa.feature.mfcc(S=logamplitude, n_mfcc=64)
             means = mfcc.mean()
             stds = mfcc.std()
             normalized = (mfcc - means) / stds

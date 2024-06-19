@@ -8,12 +8,12 @@ class TrainConfig:
     num_workers: int = 4
     lr: float = 1e-2
     batch_size: int = 16
-    min_lr: float = 6e-3
+    min_lr: float = 3e-3
     grad_clip: float = 10.0
     log_iters: int = 100
     eval_iters: int = 500
     warmup_iters: int = 2 * eval_iters
-    lr_decay_iters: int = 4000
+    lr_decay_iters: int = 8000
     max_iters: int = lr_decay_iters
     num_classes: int = 50
     dataset_name: str = "ESC-50"

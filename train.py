@@ -174,7 +174,7 @@ class Trainer:
         # create/load model
         model = (
             timm.create_model(
-                "convnextv2_atto",
+                "efficientnet_b0",
                 in_chans=1,
                 num_classes=config.num_classes,
                 drop_rate=0,
@@ -203,11 +203,11 @@ class Trainer:
             iter_start = 0
         cmodel = torch.compile(model)
         cmodel = model
-        optimizer = torch.optim.AdamW(
+        optimizer = torch.optim.SGD(
             cmodel.parameters(),
             lr=self.config.lr,
-            weight_decay=0.0,
-            amsgrad=True,
+            momentum=0.9,
+            nesterov=False,
         )
 
         best_accuracy = 0.0
