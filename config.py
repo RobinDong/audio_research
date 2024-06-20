@@ -6,7 +6,7 @@ class TrainConfig:
     meta_dir: str = "/data/audio/ESC-50-master/meta"
     eval_ratio: float = 0.01
     num_workers: int = 4
-    lr: float = 1e-2
+    lr: float = 1e-1
     batch_size: int = 16
     min_lr: float = 3e-3
     grad_clip: float = 10.0

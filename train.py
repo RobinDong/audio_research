@@ -12,6 +12,7 @@ from dataclasses import asdict
 import torch
 from torch.nn import functional as F
 from torch.utils import data
+from torchvision.transforms import v2
 from config import TrainConfig
 from datasets.esc50 import ESC50Dataset
 
@@ -36,6 +37,10 @@ class Trainer:
         self.train_batch_iter = None
         self.train_loader = self.val_loader = None
 
+        self.cutmix = v2.CutMix(num_classes=config.num_classes)
+        self.mixup = v2.MixUp(num_classes=config.num_classes)
+        self.cm = v2.RandomChoice([self.cutmix, self.mixup])
+
     def criterion(self, outputs, targets):
         one_hot = torch.zeros(
             (targets.shape[0], self.config.num_classes),
@@ -43,7 +48,7 @@ class Trainer:
             device=self.device_type,
         )
         one_hot.fill_((1 - LABEL_SMOOTH_RATIO) / self.config.num_classes)
-        one_hot.scatter_(1, targets.unsqueeze(-1), LABEL_SMOOTH_RATIO)
+        one_hot = one_hot + (targets * LABEL_SMOOTH_RATIO)
         return torch.sum(-one_hot * F.log_softmax(outputs, -1), -1).mean()
 
     def train_step(self, model, optimizer):
@@ -61,6 +66,7 @@ class Trainer:
             sounds.unsqueeze(-1).permute(0, 3, 1, 2).to(self.dtype).to(self.device_type)
         )
         labels = labels.to(self.device_type)
+        sounds, labels = self.cm(sounds, labels)
 
         with self.ctx:
             out = model(sounds)
@@ -94,7 +100,7 @@ class Trainer:
     @staticmethod
     def get_accuracy(out, target):
         _, predict = torch.max(out, dim=-1)
-        correct = predict == target
+        correct = (predict == torch.max(target, dim=-1)[1])
         accuracy = correct.sum().item() / correct.size(0)
         return accuracy
 
@@ -104,6 +110,7 @@ class Trainer:
             sounds.unsqueeze(-1).permute(0, 3, 1, 2).to(self.dtype).to(self.device_type)
         )
         labels = labels.to(self.device_type)
+        labels = F.one_hot(labels, self.config.num_classes)
         # forward
         with self.ctx:
             out = model(sounds)
@@ -176,7 +183,7 @@ class Trainer:
             timm.create_model(
                 "efficientnet_b0",
                 in_chans=1,
-                num_classes=config.num_classes,
+                num_classes=self.config.num_classes,
                 drop_rate=0,
                 drop_path_rate=0,
             )
