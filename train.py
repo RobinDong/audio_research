@@ -144,12 +144,12 @@ class Trainer:
         return accumulator
 
     def load_dataset(self):
-        file_list = glob.glob(f"{self.config.data_path}/*.npy")
+        file_list = glob.glob(f"{self.config.data_path}/*.wav")
         assert len(file_list) > 0
         if self.config.dataset_name == "ESC-50":
             file_set = set(file_list)
             val_set = set(
-                glob.glob(f"{self.config.data_path}/{self.config.eval_prefix}*.npy")
+                glob.glob(f"{self.config.data_path}/{self.config.eval_prefix}*.wav")
             )
             train_set = file_set - val_set
             train_ds = ESC50Dataset(list(train_set), self.config.meta_dir)
@@ -166,6 +166,8 @@ class Trainer:
             num_workers=self.config.num_workers,
             shuffle=True,
             pin_memory=True,
+            prefetch_factor=16,
+            persistent_workers=True,
         )
         self.train_batch_iter = iter(self.train_loader)
 
@@ -175,6 +177,8 @@ class Trainer:
             num_workers=self.config.num_workers,
             shuffle=False,
             pin_memory=True,
+            prefetch_factor=16,
+            persistent_workers=True,
         )
 
     def init(self, resume: str):

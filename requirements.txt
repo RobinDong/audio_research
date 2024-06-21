@@ -3,3 +3,6 @@ fire
 numpy==1.26.4
 timm
 tqdm
+torch
+torchvision
+torchaudio
