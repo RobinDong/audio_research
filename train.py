@@ -1,4 +1,6 @@
 import os
+import sys
+import json
 import glob
 import time
 import math
@@ -6,6 +8,7 @@ import timm
 import contextlib
 import numpy as np
 
+from types import SimpleNamespace
 from collections import defaultdict, OrderedDict
 from dataclasses import asdict
 
@@ -152,8 +155,8 @@ class Trainer:
                 glob.glob(f"{self.config.data_path}/{self.config.eval_prefix}*.wav")
             )
             train_set = file_set - val_set
-            train_ds = ESC50Dataset(list(train_set), self.config.meta_dir)
-            val_ds = ESC50Dataset(list(val_set), self.config.meta_dir, validation=True)
+            train_ds = ESC50Dataset(self.config, list(train_set), self.config.meta_dir)
+            val_ds = ESC50Dataset(self.config, list(val_set), self.config.meta_dir, validation=True)
         else:
             point = int(len(file_list) * self.config.eval_ratio)
             train_lst, val_lst = file_list[point:], file_list[:point]
@@ -185,7 +188,7 @@ class Trainer:
         # create/load model
         model = (
             timm.create_model(
-                "efficientnet_b0",
+                "efficientnet_b1",
                 in_chans=1,
                 num_classes=self.config.num_classes,
                 drop_rate=0,
@@ -279,6 +282,10 @@ if __name__ == "__main__":
     torch.backends.cudnn.enabled = True
 
     config = TrainConfig()
+    with open("config.json", "r") as fp:
+        config.dataset = json.load(fp, object_hook=lambda node: SimpleNamespace(**node))
+        print(config.dataset)
+
     if config.dataset_name == "ESC-50":
         bests = []
         for prefix in ["1", "2", "3", "4", "5"]:
