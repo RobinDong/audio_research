@@ -1,4 +1,6 @@
 import os
+import sys
+import json
 import glob
 import time
 import math
@@ -6,6 +8,7 @@ import timm
 import contextlib
 import numpy as np
 
+from types import SimpleNamespace
 from collections import defaultdict, OrderedDict
 from dataclasses import asdict
 
@@ -144,16 +147,19 @@ class Trainer:
         return accumulator
 
     def load_dataset(self):
-        file_list = glob.glob(f"{self.config.data_path}/*.wav")
+        file_list = glob.glob(f"{self.config.data_path}/*/*.npy")
         assert len(file_list) > 0
         if self.config.dataset_name == "ESC-50":
             file_set = set(file_list)
-            val_set = set(
-                glob.glob(f"{self.config.data_path}/{self.config.eval_prefix}*.wav")
+            sub_set = set(
+                glob.glob(f"{self.config.data_path}/{self.config.eval_prefix}/*.npy")
             )
-            train_set = file_set - val_set
-            train_ds = ESC50Dataset(list(train_set), self.config.meta_dir)
-            val_ds = ESC50Dataset(list(val_set), self.config.meta_dir, validation=True)
+            train_set = file_set - sub_set
+            val_set = set(
+                glob.glob(f"{self.config.data_path}/{self.config.eval_prefix}/*0.npy")
+            )
+            train_ds = ESC50Dataset(self.config, list(train_set), self.config.meta_dir)
+            val_ds = ESC50Dataset(self.config, list(val_set), self.config.meta_dir, validation=True)
         else:
             point = int(len(file_list) * self.config.eval_ratio)
             train_lst, val_lst = file_list[point:], file_list[:point]
@@ -279,6 +285,10 @@ if __name__ == "__main__":
     torch.backends.cudnn.enabled = True
 
     config = TrainConfig()
+    with open("config.json", "r") as fp:
+        config.dataset = json.load(fp, object_hook=lambda node: SimpleNamespace(**node))
+        print(config.dataset)
+
     if config.dataset_name == "ESC-50":
         bests = []
         for prefix in ["1", "2", "3", "4", "5"]:

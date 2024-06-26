@@ -17,7 +17,7 @@ FRAMES_WIN = int(FRAMES_PER_SEC * 4)  # 4 seconds
 
 
 class ESC50Dataset(Dataset):
-    def __init__(self, wave_list: str, meta_dir: str, validation: bool = False):
+    def __init__(self, config, wave_list: str, meta_dir: str, validation: bool = False):
         self.file_lst = wave_list
         self.validation = validation
         self.category_map = self.load_meta(meta_dir)
@@ -51,14 +51,8 @@ class ESC50Dataset(Dataset):
 
     def __getitem__(self, index):
         filename = self.file_lst[index]
-        try:
-            data, sr = librosa.load(filename)
-            sound = torch.from_numpy(librosa.resample(data, orig_sr=sr, target_sr=TARGET_SR))
-        except Exception as ex:
-            print(ex)
-            print(f"Failed to load {filename}")
-
-        sound = self.trans(sound)
+        sound = np.load(filename)
+        #sound = self.trans(sound)
 
         len_sound = sound.shape[-1]
         assert len_sound >= FRAMES_WIN, sound.shape
@@ -71,15 +65,16 @@ class ESC50Dataset(Dataset):
         #sound = sound[:, start : start + FRAMES_WIN]
         #sound = sound.astype(np.float32)
 
-        return sound, self.category_map[Path(filename).stem]
+        stem = Path(filename).stem.split("_")[0]
+        return sound, self.category_map[stem]
 
 
 if __name__ == "__main__":
     ds = ESC50Dataset(
         [
-            "/data/audio/ESC-50-master/audio/1-100032-A-0.wav",
-            "/data/audio/ESC-50-master/audio/2-126433-A-17.wav",
-            "/data/audio/ESC-50-master/audio/5-253094-D-49.wav",
+            "/data/audio/aug_gen/2/2-99955-A-7_1.npy",
+            "/data/audio/aug_gen/2/2-99955-A-7_3.npy",
+            "/data/audio/aug_gen/5/5-233312-A-28_9.npy",
         ],
         "/data/audio/ESC-50-master/meta/",
     )
