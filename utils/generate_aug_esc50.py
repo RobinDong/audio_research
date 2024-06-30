@@ -1,4 +1,5 @@
 import os
+import sys
 import glob
 import json
 import torch
@@ -10,8 +11,21 @@ import multiprocessing
 from pathlib import Path
 from types import SimpleNamespace
 from collections import namedtuple
+
 from torchaudio import transforms as audio_tran
-from audiomentations import Compose, AddGaussianNoise, Shift, TimeStretch, PitchShift
+from audiomentations import (
+    Compose,
+    Mp3Compression,
+    AddGaussianNoise,
+    AddColorNoise,
+    Shift,
+    TimeStretch,
+    PitchShift,
+)
+
+import warnings
+
+warnings.filterwarnings("ignore")
 
 MFCC = 64
 NR_MELS = 128
@@ -31,25 +45,37 @@ def generate_aug(
     output_dir: str,
     validation: bool = False,
 ):
-    trans = torch.nn.Sequential(
-        audio_tran.MFCC(
-            sample_rate=TARGET_SR,
-            n_mfcc=MFCC,
-            melkwargs={
-                "n_fft": 2048,
-                "hop_length": 512,
-                "n_mels": NR_MELS,
-                "f_min": FMIN,
-                "f_max": FMAX,
-            },
-        ),
-    )
+    trans = audio_tran.MFCC(
+        sample_rate=TARGET_SR,
+        n_mfcc=MFCC,
+        log_mels=True,
+        melkwargs={
+            "n_fft": 2048,
+            "hop_length": 512,
+            "n_mels": NR_MELS,
+            "f_min": FMIN,
+            "f_max": FMAX,
+        },
+    ).cuda()
+
     if not validation:
         augment = Compose(
             [
+                Mp3Compression(
+                    min_bitrate=config.dataset.mp3_min_br,
+                    max_bitrate=config.dataset.mp3_max_br,
+                    p=1.0,
+                ),
                 AddGaussianNoise(
                     min_amplitude=config.dataset.gaussian_min_amp,
                     max_amplitude=config.dataset.gaussian_max_amp,
+                    p=1.0,
+                ),
+                AddColorNoise(
+                    min_snr_db=config.dataset.color_min_snr,
+                    max_snr_db=config.dataset.color_max_snr,
+                    min_f_decay=config.dataset.color_min_f,
+                    max_f_decay=config.dataset.color_max_f,
                     p=1.0,
                 ),
                 TimeStretch(
@@ -63,8 +89,8 @@ def generate_aug(
                     p=1.0,
                 ),
                 Shift(
-                    min_shift=config.dataset.shift_min,
-                    max_shift=config.dataset.shift_max,
+                    min_shift=-0.5,
+                    max_shift=0.5,
                     p=1.0,
                 ),
             ]
@@ -79,9 +105,9 @@ def generate_aug(
         sound = librosa.resample(data, orig_sr=sr, target_sr=TARGET_SR)
         if repeat_index > 0 or not validation:
             sound = augment(samples=sound, sample_rate=TARGET_SR)
-        sound = torch.from_numpy(sound)
 
-        sound = trans(sound)
+        sound = torch.from_numpy(sound).cuda()
+        sound = trans(sound).cpu()
 
         len_sound = sound.shape[-1]
         assert len_sound >= FRAMES_WIN, sound.shape
@@ -106,7 +132,7 @@ if __name__ == "__main__":
             config=config,
             file_lst=wave_lst,
             meta_dir="/data/audio/ESC-50-master/meta",
-            output_dir="/data/audio/aug_gen",
+            output_dir=f"/data/audio/aug_gen/ns{sys.argv[1]}",
         ),
-        range(60),
+        range(20),
     )

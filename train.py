@@ -147,16 +147,17 @@ class Trainer:
         return accumulator
 
     def load_dataset(self):
-        file_list = glob.glob(f"{self.config.data_path}/*/*.npy")
+        file_list = glob.glob(f"{self.config.data_path}/ns{sys.argv[1]}/*/*.npy")
+        print(f"{self.config.data_path}/ns{sys.argv[1]}/*/*.npy")
         assert len(file_list) > 0
         if self.config.dataset_name == "ESC-50":
             file_set = set(file_list)
             sub_set = set(
-                glob.glob(f"{self.config.data_path}/{self.config.eval_prefix}/*.npy")
+                glob.glob(f"{self.config.data_path}/ns{sys.argv[1]}/{self.config.eval_prefix}/*.npy")
             )
             train_set = file_set - sub_set
             val_set = set(
-                glob.glob(f"{self.config.data_path}/{self.config.eval_prefix}/*0.npy")
+                glob.glob(f"{self.config.data_path}/ns{sys.argv[1]}/{self.config.eval_prefix}/*0.npy")
             )
             train_ds = ESC50Dataset(self.config, list(train_set), self.config.meta_dir)
             val_ds = ESC50Dataset(self.config, list(val_set), self.config.meta_dir, validation=True)
@@ -203,8 +204,13 @@ class Trainer:
         if resume:
             checkpoint = torch.load(resume, map_location=self.device_type)
             state_dict = checkpoint["model"]
-            self.config = TrainConfig(**checkpoint["train_config"])
-            iter_start = checkpoint["iteration"] + 1
+            # self.config = TrainConfig(**checkpoint["train_config"])
+            # iter_start = checkpoint["iteration"] + 1
+            iter_start = 1
+            self.config.lr = 1e-3
+            self.config.min_lr = 1e-4
+            self.config.batch_size = 16
+            self.config.max_iters = self.config.lr_decay_iters = 4000 + 1
             model.load_state_dict(state_dict)
             print(f"Resume from {iter_start - 1} for training...")
         else:
@@ -294,5 +300,5 @@ if __name__ == "__main__":
         for prefix in ["1", "2", "3", "4", "5"]:
             config.eval_prefix = prefix
             trainer = Trainer(config)
-            bests.append(trainer.train())
+            bests.append(trainer.train(resume="base_line.pt"))
         print("Avg accuracy:", sum(bests) / len(bests))

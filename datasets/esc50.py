@@ -1,10 +1,7 @@
-import torch
-import librosa
 import numpy as np
 
 from pathlib import Path
 from torch.utils.data import Dataset
-from torchaudio import transforms as audio_tran
 
 MFCC = 64
 NR_MELS = 128
@@ -21,19 +18,6 @@ class ESC50Dataset(Dataset):
         self.file_lst = wave_list
         self.validation = validation
         self.category_map = self.load_meta(meta_dir)
-        self.trans = torch.nn.Sequential(
-            audio_tran.MFCC(
-                sample_rate=TARGET_SR,
-                n_mfcc=MFCC,
-                melkwargs={
-                    "n_fft": 2048,
-                    "hop_length": 512,
-                    "n_mels": NR_MELS,
-                    "f_min": FMIN,
-                    "f_max": FMAX,
-                },
-            ),
-        )
 
     def load_meta(self, meta_dir: str) -> dict[str, int]:
         category_map = {}
@@ -52,7 +36,6 @@ class ESC50Dataset(Dataset):
     def __getitem__(self, index):
         filename = self.file_lst[index]
         sound = np.load(filename)
-        #sound = self.trans(sound)
 
         len_sound = sound.shape[-1]
         assert len_sound >= FRAMES_WIN, sound.shape
@@ -62,8 +45,7 @@ class ESC50Dataset(Dataset):
         else:
             start = np.random.randint(len_sound - FRAMES_WIN)
 
-        #sound = sound[:, start : start + FRAMES_WIN]
-        #sound = sound.astype(np.float32)
+        sound = sound[:, start: start + FRAMES_WIN]
 
         stem = Path(filename).stem.split("_")[0]
         return sound, self.category_map[stem]
