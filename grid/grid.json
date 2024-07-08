@@ -1,0 +1,158 @@
+{
+  "Mp3Compression": {
+    "p": {
+      "dtype": "float",
+      "range": [0.1, 0.9]
+    }
+  },
+  "AddGaussianNoise": {
+    "p": {
+      "dtype": "float",
+      "range": [0.1, 0.9]
+    }
+  },
+  "AddGaussianSNR": {
+    "p": {
+      "dtype": "float",
+      "range": [0.1, 0.9]
+    }
+  },
+  "AddColorNoise": {
+    "p": {
+      "dtype": "float",
+      "range": [0.1, 0.9]
+    }
+  },
+  "TimeStretch": {
+    "p": {
+      "dtype": "float",
+      "range": [0.1, 0.9]
+    }
+  },
+  "PitchShift": {
+    "p": {
+      "dtype": "float",
+      "range": [0.1, 0.9]
+    }
+  },
+  "AirAbsorption": {
+    "p": {
+      "dtype": "float",
+      "range": [0.1, 0.9]
+    }
+  },
+  "BitCrush": {
+    "p": {
+      "dtype": "float",
+      "range": [0.1, 0.9]
+    }
+  },
+  "ClippingDistortion": {
+    "p": {
+      "dtype": "float",
+      "range": [0.1, 0.9]
+    }
+  },
+  "Limiter": {
+    "p": {
+      "dtype": "float",
+      "range": [0.1, 0.9]
+    }
+  },
+  "PeakingFilter": {
+    "p": {
+      "dtype": "float",
+      "range": [0.1, 0.9]
+    }
+  },
+  "PolarityInversion": {
+    "p": {
+      "dtype": "float",
+      "range": [0.1, 0.9]
+    }
+  },
+  "Reverse": {
+    "p": {
+      "dtype": "float",
+      "range": [0.1, 0.9]
+    }
+  },
+  "RoomSimulator": {
+    "p": {
+      "dtype": "float",
+      "range": [0.1, 0.9]
+    }
+  },
+  "SevenBandParametricEQ": {
+    "p": {
+      "dtype": "float",
+      "range": [0.1, 0.9]
+    }
+  },
+  "Shift": {
+    "p": {
+      "dtype": "float",
+      "range": [0.1, 0.9]
+    }
+  },
+  "BandPassFilter": {
+    "p": {
+      "dtype": "float",
+      "range": [0.1, 0.9]
+    }
+  },
+  "BandStopFilter": {
+    "p": {
+      "dtype": "float",
+      "range": [0.1, 0.9]
+    }
+  },
+  "Gain": {
+    "p": {
+      "dtype": "float",
+      "range": [0.1, 0.9]
+    }
+  },
+  "GainTransition": {
+    "p": {
+      "dtype": "float",
+      "range": [0.1, 0.9]
+    }
+  },
+  "HighPassFilter": {
+    "p": {
+      "dtype": "float",
+      "range": [0.1, 0.9]
+    }
+  },
+  "HighShelfFilter": {
+    "p": {
+      "dtype": "float",
+      "range": [0.1, 0.9]
+    }
+  },
+  "LoudnessNormalization": {
+    "p": {
+      "dtype": "float",
+      "range": [0.1, 0.9]
+    }
+  },
+  "LowPassFilter": {
+    "p": {
+      "dtype": "float",
+      "range": [0.1, 0.9]
+    }
+  },
+  "LowShelfFilter": {
+    "p": {
+      "dtype": "float",
+      "range": [0.1, 0.9]
+    }
+  },
+  "TanhDistortion": {
+    "p": {
+      "dtype": "float",
+      "range": [0.1, 0.9]
+    }
+  }
+}
