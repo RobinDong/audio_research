@@ -6,9 +6,9 @@ import time
 import math
 import timm
 import contextlib
+import multiprocessing
 import numpy as np
 
-from types import SimpleNamespace
 from collections import defaultdict, OrderedDict
 from dataclasses import asdict
 
@@ -16,12 +16,19 @@ import torch
 from torch.nn import functional as F
 from torch.utils import data
 from torchvision.transforms import v2
+from torchaudio import transforms as audio_tran
 from config import TrainConfig
 from datasets.esc50 import ESC50Dataset
 
 SEED = 20240605
 CKPT_DIR = "out"
 LABEL_SMOOTH_RATIO = 0.5
+
+MFCC = 64
+NR_MELS = 128
+FMIN = 20
+FMAX = 20000
+TARGET_SR = 32000
 
 
 class Trainer:
@@ -44,6 +51,19 @@ class Trainer:
         self.mixup = v2.MixUp(num_classes=config.num_classes)
         self.cm = v2.RandomChoice([self.cutmix, self.mixup])
 
+        self.trans = audio_tran.MFCC(
+            sample_rate=TARGET_SR,
+            n_mfcc=MFCC,
+            log_mels=True,
+            melkwargs={
+                "n_fft": 2048,
+                "hop_length": 512,
+                "n_mels": NR_MELS,
+                "f_min": FMIN,
+                "f_max": FMAX,
+            },
+        ).cuda()
+
     def criterion(self, outputs, targets):
         one_hot = torch.zeros(
             (targets.shape[0], self.config.num_classes),
@@ -65,9 +85,9 @@ class Trainer:
             data_entry = next(self.train_batch_iter)
 
         sounds, labels = data_entry
-        sounds = (
-            sounds.unsqueeze(-1).permute(0, 3, 1, 2).to(self.dtype).to(self.device_type)
-        )
+        sounds = sounds.to(self.device_type)
+        sounds = self.trans(sounds)
+        sounds = sounds.unsqueeze(-1).permute(0, 3, 1, 2).to(self.dtype)
         labels = labels.to(self.device_type)
         sounds, labels = self.cm(sounds, labels)
 
@@ -103,15 +123,15 @@ class Trainer:
     @staticmethod
     def get_accuracy(out, target):
         _, predict = torch.max(out, dim=-1)
-        correct = (predict == torch.max(target, dim=-1)[1])
+        correct = predict == torch.max(target, dim=-1)[1]
         accuracy = correct.sum().item() / correct.size(0)
         return accuracy
 
     def get_validation_metrics(self, data_entry, model):
         sounds, labels = data_entry
-        sounds = (
-            sounds.unsqueeze(-1).permute(0, 3, 1, 2).to(self.dtype).to(self.device_type)
-        )
+        sounds = sounds.to(self.device_type)
+        sounds = self.trans(sounds)
+        sounds = sounds.unsqueeze(-1).permute(0, 3, 1, 2).to(self.dtype)
         labels = labels.to(self.device_type)
         labels = F.one_hot(labels, self.config.num_classes)
         # forward
@@ -147,20 +167,22 @@ class Trainer:
         return accumulator
 
     def load_dataset(self):
-        file_list = glob.glob(f"{self.config.data_path}/ns{sys.argv[1]}/*/*.npy")
-        print(f"{self.config.data_path}/ns{sys.argv[1]}/*/*.npy")
+        file_list = glob.glob(f"{self.config.data_path}/*.wav")
         assert len(file_list) > 0
         if self.config.dataset_name == "ESC-50":
             file_set = set(file_list)
-            sub_set = set(
-                glob.glob(f"{self.config.data_path}/ns{sys.argv[1]}/{self.config.eval_prefix}/*.npy")
-            )
-            train_set = file_set - sub_set
             val_set = set(
-                glob.glob(f"{self.config.data_path}/ns{sys.argv[1]}/{self.config.eval_prefix}/*0.npy")
+                glob.glob(f"{self.config.data_path}/{self.config.eval_prefix}*.wav")
             )
-            train_ds = ESC50Dataset(self.config, list(train_set), self.config.meta_dir)
-            val_ds = ESC50Dataset(self.config, list(val_set), self.config.meta_dir, validation=True)
+            train_set = file_set - val_set
+
+            with open(f"config_{sys.argv[1]}.json", "r") as fp:
+                config = json.load(fp)
+
+            train_ds = ESC50Dataset(config, list(train_set), self.config.meta_dir)
+            val_ds = ESC50Dataset(
+                config, list(val_set), self.config.meta_dir, validation=True
+            )
         else:
             point = int(len(file_list) * self.config.eval_ratio)
             train_lst, val_lst = file_list[point:], file_list[:point]
@@ -180,7 +202,7 @@ class Trainer:
 
         self.val_loader = data.DataLoader(
             val_ds,
-            self.config.batch_size,
+            self.config.batch_size // 8,
             num_workers=self.config.num_workers,
             shuffle=False,
             pin_memory=True,
@@ -289,16 +311,15 @@ class Trainer:
 if __name__ == "__main__":
     torch.backends.cudnn.benchmark = True
     torch.backends.cudnn.enabled = True
+    torch.set_float32_matmul_precision("high")
+    multiprocessing.set_start_method("spawn")
 
     config = TrainConfig()
-    with open("config.json", "r") as fp:
-        config.dataset = json.load(fp, object_hook=lambda node: SimpleNamespace(**node))
-        print(config.dataset)
 
     if config.dataset_name == "ESC-50":
         bests = []
         for prefix in ["1", "2", "3", "4", "5"]:
             config.eval_prefix = prefix
             trainer = Trainer(config)
-            bests.append(trainer.train(resume="base_line.pt"))
+            bests.append(trainer.train())
         print("Avg accuracy:", sum(bests) / len(bests))
