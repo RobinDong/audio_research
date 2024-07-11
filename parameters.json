@@ -1,0 +1,72 @@
+{
+  "AddGaussianNoise": {
+    "min_amplitude": {
+      "dtype": "float",
+      "range": [0.0001, 0.01],
+      "log": true
+    },
+    "max_amplitude": {
+      "dtype": "float",
+      "range": [0.01, 1.0],
+      "log": true
+    }
+  },
+  "TimeStretch": {
+    "min_rate": {
+      "dtype": "float",
+      "range": [0.5, 0.9]
+    },
+    "max_rate": {
+      "dtype": "float",
+      "range": [1.1, 1.5]
+    }
+  },
+  "AirAbsorption": {
+    "min_humidity": {
+      "dtype": "float",
+      "range": [30.0, 50.0]
+    },
+    "max_humidity": {
+      "dtype": "float",
+      "range": [70.0, 90.0]
+    },
+    "min_distance": {
+      "dtype": "float",
+      "range": [10.0, 50.0]
+    },
+    "max_distance": {
+      "dtype": "float",
+      "range": [50.0, 100.0]
+    }
+  },
+  "Gain": {
+    "min_gain_db": {
+      "dtype": "float",
+      "range": [-20.0, 0.0]
+    },
+    "max_gain_db": {
+      "dtype": "float",
+      "range": [0.0, 20.0]
+    }
+  },
+  "GainTransition": {
+    "min_gain_db": {
+      "dtype": "float",
+      "range": [-30.0, -10.0]
+    },
+    "max_gain_db": {
+      "dtype": "float",
+      "range": [0.1, 1.0]
+    }
+  },
+  "AddGaussianSNR": {
+    "min_snr_db": {
+      "dtype": "float",
+      "range": [1.0, 10.0]
+    },
+    "max_snr_db": {
+      "dtype": "float",
+      "range": [20.0, 50.0]
+    }
+  }
+}

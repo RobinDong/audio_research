@@ -7,20 +7,17 @@ import librosa
 import functools
 import numpy as np
 import multiprocessing
+import audiomentations
 
 from pathlib import Path
-from types import SimpleNamespace
-from collections import namedtuple
+from collections import defaultdict
 
 from torchaudio import transforms as audio_tran
 from audiomentations import (
     Compose,
-    Mp3Compression,
-    AddGaussianNoise,
-    AddColorNoise,
     Shift,
-    TimeStretch,
-    PitchShift,
+    PolarityInversion,
+    BitCrush,
 )
 
 import warnings
@@ -59,42 +56,17 @@ def generate_aug(
     ).cuda()
 
     if not validation:
-        augment = Compose(
-            [
-                Mp3Compression(
-                    min_bitrate=config.dataset.mp3_min_br,
-                    max_bitrate=config.dataset.mp3_max_br,
-                    p=1.0,
-                ),
-                AddGaussianNoise(
-                    min_amplitude=config.dataset.gaussian_min_amp,
-                    max_amplitude=config.dataset.gaussian_max_amp,
-                    p=1.0,
-                ),
-                AddColorNoise(
-                    min_snr_db=config.dataset.color_min_snr,
-                    max_snr_db=config.dataset.color_max_snr,
-                    min_f_decay=config.dataset.color_min_f,
-                    max_f_decay=config.dataset.color_max_f,
-                    p=1.0,
-                ),
-                TimeStretch(
-                    min_rate=config.dataset.ts_min_rate,
-                    max_rate=config.dataset.ts_max_rate,
-                    p=1.0,
-                ),
-                PitchShift(
-                    min_semitones=config.dataset.ps_min_semi,
-                    max_semitones=config.dataset.ps_max_semi,
-                    p=1.0,
-                ),
-                Shift(
-                    min_shift=-0.5,
-                    max_shift=0.5,
-                    p=1.0,
-                ),
-            ]
-        )
+        augs = [Shift(), PolarityInversion(), BitCrush()]
+        ops = defaultdict(dict)
+        for key, value in config.items():
+            op_name, attr_name = key.split(".")
+            ops[op_name][attr_name] = value[0]
+
+        for op_name, attrs in ops.items():
+            attrs_string = ", ".join([f"{key}={val}" for key, val in attrs.items()])
+            aug = eval(f"audiomentations.{op_name}({attrs_string})")
+            augs.append(aug)
+        augment = Compose(augs)
 
     # create directories
     for index in range(1, 6):
@@ -106,7 +78,7 @@ def generate_aug(
         if repeat_index > 0 or not validation:
             sound = augment(samples=sound, sample_rate=TARGET_SR)
 
-        sound = torch.from_numpy(sound).cuda()
+        sound = torch.from_numpy(sound.copy()).cuda()
         sound = trans(sound).cpu()
 
         len_sound = sound.shape[-1]
@@ -120,12 +92,11 @@ def generate_aug(
 
 
 if __name__ == "__main__":
-    config = namedtuple("config", ["dataset"])
-    with open("config.json", "r") as fp:
-        config.dataset = json.load(fp, object_hook=lambda node: SimpleNamespace(**node))
+    with open(f"config_{sys.argv[1]}.json", "r") as fp:
+        config = json.load(fp)
 
     wave_lst = glob.glob("/data/audio/ESC-50-master/audio/*.wav")
-    pool = multiprocessing.Pool(4)
+    pool = multiprocessing.Pool(8)
     pool.map(
         functools.partial(
             generate_aug,
@@ -134,5 +105,5 @@ if __name__ == "__main__":
             meta_dir="/data/audio/ESC-50-master/meta",
             output_dir=f"/data/audio/aug_gen/ns{sys.argv[1]}",
         ),
-        range(20),
+        range(48),
     )
