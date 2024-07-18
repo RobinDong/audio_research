@@ -12,26 +12,19 @@ from audiomentations import (
     BitCrush,
 )
 
-MFCC = 64
-NR_MELS = 128
-FMIN = 20
-FMAX = 20000
 TARGET_SR = 32000
-
-FRAMES_PER_SEC = 62.6
-FRAMES_WIN = int(FRAMES_PER_SEC * 4)  # 4 seconds
+AUG_P = 0.5
+PERIOD_RATIO = 0.6
 
 
 class ESC50Dataset(Dataset):
-    def __init__(
-        self, config, wave_list: str, meta_dir: str, validation: bool = False
-    ):
+    def __init__(self, config, wave_list: str, meta_dir: str, validation: bool = False):
         self.file_lst = wave_list
         self.validation = validation
         self.category_map = self.load_meta(meta_dir)
 
         if not validation:
-            augs = [Shift(), PolarityInversion(), BitCrush()]
+            augs = [Shift(p=AUG_P), PolarityInversion(p=AUG_P), BitCrush(p=AUG_P)]
             ops = defaultdict(dict)
             for key, value in config.items():
                 op_name, attr_name = key.split(".")
@@ -39,6 +32,7 @@ class ESC50Dataset(Dataset):
 
             for op_name, attrs in ops.items():
                 attrs_string = ", ".join([f"{key}={val}" for key, val in attrs.items()])
+                attrs_string += f", p={AUG_P}"
                 aug = eval(f"audiomentations.{op_name}({attrs_string})")
                 augs.append(aug)
             self.augment = Compose(augs)
@@ -62,24 +56,27 @@ class ESC50Dataset(Dataset):
 
         data, sr = librosa.load(filename)
         sound = librosa.resample(data, orig_sr=sr, target_sr=TARGET_SR)
-        if not self.validation:
-            sound = self.augment(samples=sound, sample_rate=TARGET_SR)
 
-        '''sound = torch.from_numpy(sound.copy()).cuda()
-        sound = self.trans(sound).cpu()
-
-        len_sound = sound.shape[-1]
-        assert len_sound >= FRAMES_WIN, sound.shape
+        len_sound = sound.shape[0]
+        FRAMES_WIN = int(len_sound * PERIOD_RATIO)
 
         if self.validation:
             start = 0
         else:
             start = np.random.randint(len_sound - FRAMES_WIN)
 
-        sound = sound[:, start: start + FRAMES_WIN]'''
+        sound = sound[start: start + FRAMES_WIN]
 
         stem = Path(filename).stem.split("_")[0]
-        return sound, self.category_map[stem]
+        if self.validation:
+            return sound, sound, sound, self.category_map[stem]
+        else:
+            return (
+                sound,
+                self.augment(samples=sound, sample_rate=TARGET_SR),
+                self.augment(samples=sound, sample_rate=TARGET_SR),
+                self.category_map[stem],
+            )
 
 
 if __name__ == "__main__":
