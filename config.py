@@ -2,10 +2,10 @@ from dataclasses import dataclass
 
 @dataclass
 class TrainConfig:
-    data_path: str = "/data/audio/aug_gen"
+    data_path: str = "/data/audio/ESC-50-master/audio"
     meta_dir: str = "/data/audio/ESC-50-master/meta"
     eval_ratio: float = 0.01
-    num_workers: int = 4
+    num_workers: int = 32
     lr: float = 1e-1
     batch_size: int = 16
     min_lr: float = 3e-3

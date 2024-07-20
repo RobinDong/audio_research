@@ -30,7 +30,6 @@ def objective(trial):
 
     with open(f"config_{namespace}.json", "w") as fp:
         json.dump(config, fp)
-    subprocess.run(f"python3 utils/generate_aug_esc50.py {namespace}", shell=True)
     subprocess.run(f"python3 train.py {namespace} > {namespace}.log", shell=True)
     res = subprocess.run(
         f"grep -i avg {namespace}.log", shell=True, capture_output=True
