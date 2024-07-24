@@ -1,43 +1,31 @@
-import os
 import fire
 import glob
-import librosa
-import numpy as np
+import pickle
+import tarfile
 
 from pathlib import Path
 from tqdm import tqdm
 
-NR_MELS = 128
-FMIN = 20
-FMAX = 20000
-QUANT_RANGE = 4  # range (-4, 4)
-QUANT_GRANU = 256  # 8bit
-
 
 class AudioSetExporter:
-    def export(self, audio_dir: str, npy_dir: str):
-        file_lst = glob.glob(f"{audio_dir}/*/*.flac")
-        if not os.path.exists(npy_dir):
-            os.mkdir(npy_dir)
-        for filename in tqdm(file_lst):
-            data, sr = librosa.load(filename)
-            # We use 20Hz to 20kHz as the range of human hearing
-            spectro = librosa.feature.melspectrogram(
-                y=data, sr=sr, n_mels=NR_MELS, fmin=FMIN, fmax=FMAX
-            )
-            s_db = librosa.power_to_db(spectro, ref=np.max)
-
-            means = s_db.mean()
-            stds = s_db.std()
-            normalized = (s_db - means) / stds
-            # range (-4, 4)
-            normalized = (
-                (normalized + QUANT_RANGE) * QUANT_GRANU * 2 / QUANT_RANGE
-            ).astype(np.uint8)
-
-            new_name = Path(filename).stem + ".npy"
-            with open(f"{npy_dir}/{new_name}", "wb") as fp:
-                np.save(fp, normalized)
+    def export(self, tar_files_prefix: str, output_dir: str):
+        tar_lst = glob.glob(f"{tar_files_prefix}*.tar")
+        for tar_filename in tqdm(tar_lst):
+            entries = []
+            with tarfile.open(tar_filename, "r") as db:
+                for tarinfo in db:
+                    entries.append(
+                        (
+                            Path(tarinfo.name).stem,
+                            tar_filename,
+                            tarinfo.offset_data,
+                            tarinfo.size,
+                        )
+                    )
+            # write index file and data file
+            index_filename = Path(tar_filename).stem + ".pkl"
+            with open(f"{output_dir}/{index_filename}", "wb") as idx_fp:
+                pickle.dump(entries, idx_fp)
 
 
 if __name__ == "__main__":
