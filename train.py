@@ -5,22 +5,24 @@ import glob
 import time
 import math
 import timm
-import torchaudio
+import torchvision
 import contextlib
 import multiprocessing
-import numpy as np
 import torch.nn as nn
 
-from collections import defaultdict, OrderedDict
+from collections import OrderedDict
 from dataclasses import asdict
 
 import torch
 from torch.nn import functional as F
 from torch.utils import data
 from torchvision.transforms import v2
+
 from config import TrainConfig
-from datasets.esc50 import ESC50Dataset
+from stats import calculate_stats
 from supcon_loss import SupConLoss
+from datasets.esc50 import ESC50Dataset
+from datasets.audioset import AudioSetDataset
 
 SEED = 20240605
 CKPT_DIR = "out"
@@ -57,19 +59,22 @@ class Trainer:
         self.mixup = v2.MixUp(num_classes=config.num_classes)
         self.cm = v2.RandomChoice([self.cutmix, self.mixup])
 
-        self.trans = torchaudio.compliance.kaldi.fbank
         self.supcon_loss = SupConLoss()
+        self.loss_fn = nn.BCEWithLogitsLoss()
+        self.resizer = torchvision.transforms.Resize((384, 384))
 
     def criterion(self, outputs, targets):
-        outputs = self.classifier(outputs)
-        one_hot = torch.zeros(
-            (targets.shape[0], self.config.num_classes),
-            dtype=self.dtype,
-            device=self.device_type,
-        )
-        one_hot.fill_((1 - LABEL_SMOOTH_RATIO) / self.config.num_classes)
-        one_hot = one_hot + (targets * LABEL_SMOOTH_RATIO)
-        return torch.sum(-one_hot * F.log_softmax(outputs, -1), -1).mean()
+        if self.config.dataset_name == "ESC-50":
+            one_hot = torch.zeros(
+                (targets.shape[0], self.config.num_classes),
+                dtype=self.dtype,
+                device=self.device_type,
+            )
+            one_hot.fill_((1 - LABEL_SMOOTH_RATIO) / self.config.num_classes)
+            one_hot = one_hot + (targets * LABEL_SMOOTH_RATIO)
+            return torch.sum(-one_hot * F.log_softmax(outputs, -1), -1).mean()
+        else:
+            return self.loss_fn(outputs, targets)
 
     def next_batch(self, loader, batch_iter):
         try:
@@ -83,40 +88,18 @@ class Trainer:
         return data_entry
 
     def train_step(self, model, optimizer):
-        data_entry = self.next_batch(self.train_loader, self.train_batch_iter)
-        # sounds, _, _, labels = self.next_batch(self.train_loader, self.train_batch_iter)
-        sounds = torch.cat(data_entry[:-1])
-        sounds = sounds.to(self.device_type)
-        sounds = torch.stack(
-            [
-                self.trans(
-                    sound.unsqueeze(0),
-                    htk_compat=True,
-                    sample_frequency=TARGET_SR,
-                    use_energy=False,
-                    window_type="hanning",
-                    num_mel_bins=128,
-                    dither=0.0,
-                    frame_shift=10,
-                )
-                for sound in sounds
-            ]
-        )
-        sounds = sounds.unsqueeze(-1).permute(0, 3, 1, 2).to(self.dtype)
-        labels = torch.cat((data_entry[-1], data_entry[-1], data_entry[-1]))
+        sounds, labels = self.next_batch(self.train_loader, self.train_batch_iter)
+        # shape of 'sounds' for AudioSet [batch_size, 1, 1024, 128]
+        sounds = sounds.unsqueeze(1).to(self.device_type).to(self.dtype)
         labels = labels.to(self.device_type)
-        sounds, labels = self.cm(sounds, labels)
+        if self.config.dataset_name == "ESC-50":
+            sounds, labels = self.cm(sounds, labels)
+        elif self.config.dataset_name == "AudioSet":
+            sounds = self.resizer(sounds)
 
         with self.ctx:
             out = model(sounds)
             loss = self.criterion(out, labels)
-            # Add SupCon loss
-            features = out.view(self.config.batch_size, 3, -1)
-            sc_loss = self.supcon_loss(features, data_entry[-1])
-            # loss += sc_loss * 0.01
-
-        l2_penalty = sum([(p**2).sum() for p in self.classifier.parameters()])
-        # loss = loss + l2_penalty * 0.1
 
         self.scaler.scale(loss).backward()
         self.scaler.unscale_(optimizer)
@@ -125,7 +108,7 @@ class Trainer:
         self.scaler.update()
         optimizer.zero_grad(set_to_none=True)
 
-        return out, labels, loss, sc_loss
+        return out, labels, loss
 
     def get_lr(self, iteration):
         config = self.config
@@ -144,67 +127,70 @@ class Trainer:
         return config.min_lr + coeff * (config.lr - config.min_lr)
 
     def get_accuracy(self, out, target):
-        out = self.classifier(out)
         _, predict = torch.max(out, dim=-1)
         correct = predict == torch.max(target, dim=-1)[1]
         accuracy = correct.sum().item() / correct.size(0)
-        return accuracy
-
-    def get_validation_metrics(self, data_entry, model):
-        sounds, _, _, labels = data_entry
-        sounds = sounds.to(self.device_type)
-        sounds = torch.stack(
-            [
-                self.trans(
-                    sound.unsqueeze(0),
-                    htk_compat=True,
-                    sample_frequency=TARGET_SR,
-                    use_energy=False,
-                    window_type="hanning",
-                    num_mel_bins=128,
-                    dither=0.0,
-                    frame_shift=10,
-                )
-                for sound in sounds
-            ]
-        )
-        sounds = sounds.unsqueeze(-1).permute(0, 3, 1, 2).to(self.dtype)
-        labels = labels.to(self.device_type)
-        labels = F.one_hot(labels, self.config.num_classes)
-        # forward
-        with self.ctx:
-            out = model(sounds)
-            loss = self.criterion(out, labels)
-        # accuracy
-        accuracy = self.get_accuracy(out, labels)
-        return OrderedDict(
-            [
-                ("loss", loss.item()),
-                ("accuracy", accuracy),
-            ]
-        )
+        if self.config.dataset_name == "ESC-50":
+            return accuracy
+        elif self.config.dataset_name == "AudioSet":
+            out = F.sigmoid(out)
+            mAP, AUC = calculate_stats(
+                out.cpu().detach().numpy(), target.cpu().detach().numpy()
+            )
+            return accuracy, mAP, AUC
 
     @torch.no_grad()
-    def validate(self, cmodel):
+    def validate(self, cmodel, iteration):
         cmodel.eval()
 
-        batch_iter = iter(self.val_loader)
-        accumulator = defaultdict(float)
-        length = len(self.val_loader)
-        for _ in range(length):
-            data_entry = next(batch_iter)
-            metrics = self.get_validation_metrics(data_entry, cmodel)
-            for key, val in metrics.items():
-                accumulator[key] += val
+        accumu_out = []
+        accumu_labels = []
+        accumu_loss = 0
+        for data_entry in self.val_loader:
+            sounds, labels = data_entry
+            sounds = sounds.unsqueeze(1).to(self.device_type).to(self.dtype)
+            labels = labels.to(self.device_type)
+            if self.config.dataset_name == "ESC-50":
+                labels = F.one_hot(labels, self.config.num_classes)
+            elif self.config.dataset_name == "AudioSet":
+                sounds = self.resizer(sounds)
+            # forward
+            with self.ctx:
+                out = cmodel(sounds)
+                loss = self.criterion(out, labels)
+                accumu_out.append(out.cpu().detach())
+                accumu_labels.append(labels.cpu().detach())
+                accumu_loss += loss
 
-        for key, val in accumulator.items():
-            accumulator[key] /= length
+        # accuracy
+        out = torch.cat(accumu_out)
+        labels = torch.cat(accumu_labels)
+        if self.config.dataset_name == "ESC-50":
+            accuracy = self.get_accuracy(out, labels)
+            res = OrderedDict(
+                [
+                    ("accuracy", accuracy),
+                    ("loss", accumu_loss / len(self.val_loader)),
+                ]
+            )
+        elif self.config.dataset_name == "AudioSet":
+            accuracy, mAP, AUC = self.get_accuracy(out, labels)
+            res = OrderedDict(
+                [
+                    ("accuracy", accuracy),
+                    ("mAP", mAP),
+                    ("AUC", AUC),
+                ]
+            )
 
         cmodel.train()
-        return accumulator
+        return res
 
     def load_dataset(self):
         file_list = glob.glob(f"{self.config.data_path}/*.wav")
+        with open(f"config_{sys.argv[1]}.json", "r") as fp:
+            config = json.load(fp)
+
         assert len(file_list) > 0
         if self.config.dataset_name == "ESC-50":
             file_set = set(file_list)
@@ -213,18 +199,21 @@ class Trainer:
             )
             train_set = file_set - val_set
 
-            with open(f"config_{sys.argv[1]}.json", "r") as fp:
-                config = json.load(fp)
-
             train_ds = ESC50Dataset(config, list(train_set), self.config.meta_dir)
             val_ds = ESC50Dataset(
                 config, list(val_set), self.config.meta_dir, validation=True
             )
-        else:
-            point = int(len(file_list) * self.config.eval_ratio)
-            train_lst, val_lst = file_list[point:], file_list[:point]
-            np.random.seed(SEED)
-            np.random.shuffle(file_list)
+        elif self.config.dataset_name == "AudioSet":
+            train_ds = AudioSetDataset(
+                config,
+                "/data/audioset/bal_train0[1-9].pkl",
+                "/data/audioset/balanced_train_segments.csv",
+            )
+            val_ds = AudioSetDataset(
+                config,
+                "/data/audioset/bal_train00.pkl",
+                "/data/audioset/balanced_train_segments.csv",
+            )
 
         self.train_loader = data.DataLoader(
             train_ds,
@@ -234,6 +223,7 @@ class Trainer:
             pin_memory=True,
             prefetch_factor=4,
             persistent_workers=True,
+            collate_fn=AudioSetDataset.my_collate,
         )
         self.train_batch_iter = iter(self.train_loader)
 
@@ -245,24 +235,29 @@ class Trainer:
             pin_memory=True,
             prefetch_factor=4,
             persistent_workers=True,
+            collate_fn=AudioSetDataset.my_collate,
         )
 
     def init(self, resume: str):
         # create/load model
+        model_name = (
+            "efficientnet_b0"
+            if self.config.dataset_name == "ESC-50"
+            else "timm/deit_base_distilled_patch16_384.fb_in1k"
+        )
+        drop_rate = 0.3 if self.config.dataset_name == "ESC-50" else 0.0
         model = (
             timm.create_model(
-                "efficientnet_b0",
+                model_name,
                 in_chans=1,
                 num_classes=self.config.num_classes,
-                drop_rate=0.3,
-                drop_path_rate=0.3,
+                drop_rate=drop_rate,
+                drop_path_rate=drop_rate,
                 pretrained=True,
             )
             .to(self.dtype)
             .to(self.device_type)
         )
-        self.classifier = model.classifier
-        model.classifier = Identity()
         if resume:
             checkpoint = torch.load(resume, map_location=self.device_type)
             state_dict = checkpoint["model"]
@@ -287,13 +282,15 @@ class Trainer:
             self.config.lr = learning_rate
             iter_start = 0
         cmodel = torch.compile(model)
-        cmodel = model
-        optimizer = torch.optim.SGD(
-            cmodel.parameters(),
-            lr=self.config.lr,
-            momentum=0.9,
-            nesterov=False,
-        )
+        if self.config.dataset_name == "ESC-50":
+            optimizer = torch.optim.SGD(
+                cmodel.parameters(),
+                lr=self.config.lr,
+                momentum=0.9,
+                nesterov=False,
+            )
+        elif self.config.dataset_name == "AudioSet":
+            optimizer = torch.optim.Adam(cmodel.parameters(), self.config.lr)
 
         best_accuracy = 0.0
         begin = time.time()
@@ -303,16 +300,27 @@ class Trainer:
             for param_group in optimizer.param_groups:
                 param_group["lr"] = lr
 
-            out, labels, loss, sc_loss = self.train_step(cmodel, optimizer)
+            out, labels, loss = self.train_step(cmodel, optimizer)
 
             if iteration % self.config.log_iters == 0 and iteration > 0:
-                metrics = OrderedDict(
-                    [
-                        ("loss", loss.item()),
-                        ("sc_loss", sc_loss.item()),
-                        ("accuracy", self.get_accuracy(out, labels)),
-                    ],
-                )
+                if self.config.dataset_name == "ESC-50":
+                    accuracy = self.get_accuracy(out, labels)
+                    metrics = OrderedDict(
+                        [
+                            ("loss", loss.item()),
+                            ("accuracy", accuracy),
+                        ],
+                    )
+                elif self.config.dataset_name == "AudioSet":
+                    accuracy, mAP, AUC = self.get_accuracy(out, labels)
+                    metrics = OrderedDict(
+                        [
+                            ("loss", loss.item()),
+                            ("accuracy", accuracy),
+                            ("mAP", mAP),
+                            ("AUC", AUC),
+                        ],
+                    )
                 epoch = iteration // len(self.train_loader)
                 now = time.time()
                 duration = now - begin
@@ -324,7 +332,7 @@ class Trainer:
                 messages.append(f"time: {duration:.1f}")
                 print(" ".join(messages), flush=True)
             if iteration % self.config.eval_iters == 0 and iteration > 0:
-                accumulator = self.validate(cmodel)
+                accumulator = self.validate(cmodel, iteration)
                 val_accuracy = accumulator["accuracy"]
                 best_accuracy = max(best_accuracy, val_accuracy)
                 checkpoint = {
@@ -357,10 +365,21 @@ if __name__ == "__main__":
 
     config = TrainConfig()
 
-    if config.dataset_name == "ESC-50":
+    if sys.argv[2] == "ESC-50":
         bests = []
         for prefix in ["1", "2", "3", "4", "5"]:
             config.eval_prefix = prefix
             trainer = Trainer(config)
             bests.append(trainer.train())
         print("Avg accuracy:", sum(bests) / len(bests))
+    elif sys.argv[2] == "AudioSet":
+        config.dataset_name = "AudioSet"
+        config.num_classes = 527
+        config.batch_size = 16
+        config.num_workers = 8
+        config.lr = 1e-4
+        config.min_lr = 5e-6
+        config.lr_decay_iters = 12000 + 1
+        config.max_iters = config.lr_decay_iters
+        trainer = Trainer(config)
+        trainer.train()

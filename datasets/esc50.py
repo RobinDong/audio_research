@@ -1,6 +1,6 @@
-import librosa
+import torchaudio
 import numpy as np
-import audiomentations
+import audiomentations  # noqa: F401
 
 from pathlib import Path
 from collections import defaultdict
@@ -54,10 +54,9 @@ class ESC50Dataset(Dataset):
     def __getitem__(self, index):
         filename = self.file_lst[index]
 
-        data, sr = librosa.load(filename)
-        sound = librosa.resample(data, orig_sr=sr, target_sr=TARGET_SR)
+        sound, sr = torchaudio.load(filename)
 
-        len_sound = sound.shape[0]
+        len_sound = sound.size(-1)
         FRAMES_WIN = int(len_sound * PERIOD_RATIO)
 
         if self.validation:
@@ -65,18 +64,20 @@ class ESC50Dataset(Dataset):
         else:
             start = np.random.randint(len_sound - FRAMES_WIN)
 
-        sound = sound[start: start + FRAMES_WIN]
+        sound = sound[:, start : start + FRAMES_WIN]
+        fbank = torchaudio.compliance.kaldi.fbank(
+            sound,
+            htk_compat=True,
+            sample_frequency=sr,
+            use_energy=False,
+            window_type="hanning",
+            num_mel_bins=128,
+            dither=0.0,
+            frame_shift=10,
+        )
 
         stem = Path(filename).stem.split("_")[0]
-        if self.validation:
-            return sound, sound, sound, self.category_map[stem]
-        else:
-            return (
-                sound,
-                self.augment(samples=sound, sample_rate=TARGET_SR),
-                self.augment(samples=sound, sample_rate=TARGET_SR),
-                self.category_map[stem],
-            )
+        return fbank, self.category_map[stem]
 
 
 if __name__ == "__main__":

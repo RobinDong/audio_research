@@ -1,5 +1,6 @@
 from dataclasses import dataclass
 
+
 @dataclass
 class TrainConfig:
     data_path: str = "/data/audio/ESC-50-master/audio"
@@ -7,7 +8,7 @@ class TrainConfig:
     eval_ratio: float = 0.01
     num_workers: int = 32
     lr: float = 1e-1
-    batch_size: int = 16
+    batch_size: int = 48
     min_lr: float = 3e-3
     grad_clip: float = 10.0
     log_iters: int = 100
