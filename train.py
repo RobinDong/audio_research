@@ -8,6 +8,7 @@ import timm
 import torchvision
 import contextlib
 import multiprocessing
+import numpy as np
 import torch.nn as nn
 
 from collections import OrderedDict
@@ -87,6 +88,16 @@ class Trainer:
             data_entry = next(batch_iter)
         return data_entry
 
+    def mixup_data(self, sounds, labels):
+        lam = np.random.beta(10, 10)
+
+        batch_size = sounds.size(0)
+        index = torch.randperm(batch_size).cuda()
+
+        mixed_sounds = lam * sounds + (1 - lam) * sounds[index, :]
+        mixed_labels = lam * labels + (1 - lam) * labels[index, :]
+        return mixed_sounds, mixed_labels
+
     def train_step(self, model, optimizer):
         sounds, labels = self.next_batch(self.train_loader, self.train_batch_iter)
         # shape of 'sounds' for AudioSet [batch_size, 1, 1024, 128]
@@ -96,6 +107,7 @@ class Trainer:
             sounds, labels = self.cm(sounds, labels)
         elif self.config.dataset_name == "AudioSet":
             sounds = self.resizer(sounds)
+            # sounds, labels = self.mixup_data(sounds, labels)
 
         with self.ctx:
             out = model(sounds)
@@ -130,14 +142,15 @@ class Trainer:
         _, predict = torch.max(out, dim=-1)
         correct = predict == torch.max(target, dim=-1)[1]
         accuracy = correct.sum().item() / correct.size(0)
-        if self.config.dataset_name == "ESC-50":
-            return accuracy
-        elif self.config.dataset_name == "AudioSet":
+        return accuracy
+
+    def get_auc(self, out, target, sigmoid=False):
+        if sigmoid:
             out = F.sigmoid(out)
-            mAP, AUC = calculate_stats(
-                out.cpu().detach().numpy(), target.cpu().detach().numpy()
-            )
-            return accuracy, mAP, AUC
+        mAP, AUC = calculate_stats(
+            out.cpu().detach().numpy(), target.cpu().detach().numpy()
+        )
+        return mAP, AUC
 
     @torch.no_grad()
     def validate(self, cmodel, iteration):
@@ -169,15 +182,15 @@ class Trainer:
             accuracy = self.get_accuracy(out, labels)
             res = OrderedDict(
                 [
-                    ("accuracy", accuracy),
                     ("loss", accumu_loss / len(self.val_loader)),
+                    ("accuracy", accuracy),
                 ]
             )
         elif self.config.dataset_name == "AudioSet":
-            accuracy, mAP, AUC = self.get_accuracy(out, labels)
+            mAP, AUC = self.get_auc(out, labels, sigmoid=True)
             res = OrderedDict(
                 [
-                    ("accuracy", accuracy),
+                    ("loss", accumu_loss / len(self.val_loader)),
                     ("mAP", mAP),
                     ("AUC", AUC),
                 ]
@@ -213,6 +226,7 @@ class Trainer:
                 config,
                 "/data/audioset/bal_train00.pkl",
                 "/data/audioset/balanced_train_segments.csv",
+                validation=True,
             )
 
         self.train_loader = data.DataLoader(
@@ -292,8 +306,12 @@ class Trainer:
         elif self.config.dataset_name == "AudioSet":
             optimizer = torch.optim.Adam(cmodel.parameters(), self.config.lr)
 
-        best_accuracy = 0.0
+        best_metric = 0.0
         begin = time.time()
+
+        if self.config.dataset_name == "AudioSet":
+            accumu_out = []
+            accumu_labels = []
 
         for iteration in range(iter_start, self.config.max_iters):
             lr = self.get_lr(iteration)
@@ -301,26 +319,23 @@ class Trainer:
                 param_group["lr"] = lr
 
             out, labels, loss = self.train_step(cmodel, optimizer)
+            if self.config.dataset_name == "AudioSet":
+                accumu_out.append(out.cpu().detach())
+                accumu_labels.append(labels.cpu().detach())
 
             if iteration % self.config.log_iters == 0 and iteration > 0:
+                metrics = OrderedDict(
+                    [
+                        ("loss", loss.item()),
+                    ],
+                )
                 if self.config.dataset_name == "ESC-50":
-                    accuracy = self.get_accuracy(out, labels)
-                    metrics = OrderedDict(
-                        [
-                            ("loss", loss.item()),
-                            ("accuracy", accuracy),
-                        ],
-                    )
-                elif self.config.dataset_name == "AudioSet":
-                    accuracy, mAP, AUC = self.get_accuracy(out, labels)
-                    metrics = OrderedDict(
-                        [
-                            ("loss", loss.item()),
-                            ("accuracy", accuracy),
-                            ("mAP", mAP),
-                            ("AUC", AUC),
-                        ],
-                    )
+                    metrics["accuracy"] = self.get_accuracy(out, labels)
+                '''elif self.config.dataset_name == "AudioSet":
+                    out = torch.cat(accumu_labels)
+                    labels = torch.cat(accumu_labels)
+                    metrics["mAP"], metrics["AUC"] = self.get_auc(out, labels)'''
+
                 epoch = iteration // len(self.train_loader)
                 now = time.time()
                 duration = now - begin
@@ -333,13 +348,16 @@ class Trainer:
                 print(" ".join(messages), flush=True)
             if iteration % self.config.eval_iters == 0 and iteration > 0:
                 accumulator = self.validate(cmodel, iteration)
-                val_accuracy = accumulator["accuracy"]
-                best_accuracy = max(best_accuracy, val_accuracy)
+                main_metric = (
+                    "accuracy" if self.config.dataset_name == "ESC-50" else "mAP"
+                )
+                val_metric = accumulator[main_metric]
+                best_metric = max(best_metric, val_metric)
                 checkpoint = {
                     "model": model.state_dict(),
                     "iteration": iteration,
                     "train_config": asdict(self.config),
-                    "eval_accuracy": val_accuracy,
+                    "eval_metric": val_metric,
                 }
                 torch.save(
                     checkpoint,
@@ -353,8 +371,8 @@ class Trainer:
                     messages.append(f"{name}: {val:.3f}")
                 print(" ".join(messages), flush=True)
 
-        print("Best validating accuracy:", best_accuracy)
-        return best_accuracy
+        print("Best validating metric:", best_metric)
+        return best_metric
 
 
 if __name__ == "__main__":
@@ -376,7 +394,7 @@ if __name__ == "__main__":
         config.dataset_name = "AudioSet"
         config.num_classes = 527
         config.batch_size = 16
-        config.num_workers = 8
+        config.num_workers = 16
         config.lr = 1e-4
         config.min_lr = 5e-6
         config.lr_decay_iters = 12000 + 1
