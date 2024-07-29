@@ -219,13 +219,13 @@ class Trainer:
         elif self.config.dataset_name == "AudioSet":
             train_ds = AudioSetDataset(
                 config,
-                "/data/audioset/bal_train0[1-9].pkl",
+                "/data/audioset/bal_train*.pkl",
                 "/data/audioset/balanced_train_segments.csv",
             )
             val_ds = AudioSetDataset(
                 config,
-                "/data/audioset/bal_train00.pkl",
-                "/data/audioset/balanced_train_segments.csv",
+                "/data/audioset/eval00.pkl",
+                "/data/audioset/eval_segments.csv",
                 validation=True,
             )
 

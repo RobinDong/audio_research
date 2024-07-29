@@ -56,23 +56,32 @@ class AudioSetDataset(Dataset):
                 augs.append(aug)
             self.augment = Compose(augs)
 
+    def traverse_lines(self, lines):
+        filenames, labels = [], []
+        for line in lines:
+            if line[0] == "#":
+                continue
+            filenames.append(line.split(",")[0])
+            labels.append(line.split('"')[1].split(","))
+        return filenames, labels
+
     def load_meta(self, meta_file: str) -> dict[str, int]:
         name_to_labels = {}
         label_map = {}
-        label_start = 0
         with open(meta_file, "r") as fp:
             lines = fp.readlines()
-            for line in lines:
-                if line[0] == "#":
-                    continue
-                filename = line.split(",")[0]
-                labels = line.split('"')[1].split(",")
-                label_ids = set()
-                for label in labels:
-                    if label not in label_map:
-                        label_map[label] = label_start
-                        label_start += 1
-                    label_ids.add(label_map[label])
+            filenames, labels = self.traverse_lines(lines)
+            uniq_labels = set()
+            # build label map {label_name -> label_id}
+            for filename, label in zip(filenames, labels):
+                for lab in label:
+                    uniq_labels.add(lab)
+            uniq_labels = sorted(uniq_labels)
+            for index, label in enumerate(uniq_labels):
+                label_map[label] = index
+            # filename to labels
+            for filename, label in zip(filenames, labels):
+                label_ids = {label_map[lab] for lab in label}
                 name_to_labels[filename] = tuple(label_ids)
 
         return name_to_labels
@@ -156,9 +165,9 @@ class AudioSetDataset(Dataset):
                 sound = sound * lam + sound2 * (1 - lam)
                 label = label * lam + label2 * (1 - lam)"""
 
-        '''sound = sound - sound.mean()
+        """sound = sound - sound.mean()
         mean, std = torch.std_mean(sound, dim=1)
-        sound = (sound - mean) / std'''
+        sound = (sound - mean) / std"""
         fbank = self.sound_to_fbank(sound, sr)
         return fbank, label
 
