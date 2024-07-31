@@ -56,6 +56,9 @@ class AudioSetDataset(Dataset):
                 augs.append(aug)
             self.augment = Compose(augs)
 
+            self.freqm = torchaudio.transforms.FrequencyMasking(128 * 0.2)
+            self.timem = torchaudio.transforms.TimeMasking(AUDIO_WIN * 0.2)
+
     def traverse_lines(self, lines):
         filenames, labels = [], []
         for line in lines:
@@ -84,6 +87,7 @@ class AudioSetDataset(Dataset):
                 label_ids = {label_map[lab] for lab in label}
                 name_to_labels[filename] = tuple(label_ids)
 
+        print("label_map:", len(label_map))
         return name_to_labels
 
     def __len__(self):
@@ -156,7 +160,7 @@ class AudioSetDataset(Dataset):
         if sound is None:
             return None, None
         label = self.index_to_label(index)
-        """if sound is not None and not self.validation:  # mixup
+        """if not self.validation:  # mixup
             mixup_idx = np.random.randint(0, len(self.file_lst))
             sound2, sr2 = self.index_to_sound(mixup_idx)
             if sound2 is not None:
@@ -165,10 +169,17 @@ class AudioSetDataset(Dataset):
                 sound = sound * lam + sound2 * (1 - lam)
                 label = label * lam + label2 * (1 - lam)"""
 
-        """sound = sound - sound.mean()
-        mean, std = torch.std_mean(sound, dim=1)
+        """mean, std = torch.std_mean(sound, dim=1)
         sound = (sound - mean) / std"""
         fbank = self.sound_to_fbank(sound, sr)
+
+        if not self.validation:  # SpecAug
+            fbank = torch.transpose(fbank, 0, 1)
+            fbank = fbank.unsqueeze(0)
+            fbank = self.freqm(fbank)
+            fbank = self.timem(fbank)
+            fbank = fbank.squeeze(0)
+            fbank = torch.transpose(fbank, 0, 1)
         return fbank, label
 
     @staticmethod
