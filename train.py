@@ -3,7 +3,6 @@ import sys
 import json
 import glob
 import time
-import math
 import timm
 import torchvision
 import contextlib
@@ -77,17 +76,6 @@ class Trainer:
         else:
             return self.loss_fn(outputs, targets)
 
-    def next_batch(self, loader, batch_iter):
-        try:
-            data_entry = next(batch_iter)
-            if len(data_entry[0]) < self.config.batch_size:
-                batch_iter = iter(loader)
-                data_entry = next(batch_iter)
-        except StopIteration:
-            batch_iter = iter(loader)
-            data_entry = next(batch_iter)
-        return data_entry
-
     def mixup_data(self, sounds, labels):
         lam = np.random.beta(10, 10)
 
@@ -98,8 +86,8 @@ class Trainer:
         mixed_labels = lam * labels + (1 - lam) * labels[index, :]
         return mixed_sounds, mixed_labels
 
-    def train_step(self, model, optimizer):
-        sounds, labels = self.next_batch(self.train_loader, self.train_batch_iter)
+    def train_step(self, model, optimizer, batch):
+        sounds, labels = batch
         # shape of 'sounds' for AudioSet [batch_size, 1, 1024, 128]
         sounds = sounds.unsqueeze(1).to(self.device_type).to(self.dtype)
         labels = labels.to(self.device_type)
@@ -107,7 +95,7 @@ class Trainer:
             sounds, labels = self.cm(sounds, labels)
         elif self.config.dataset_name == "AudioSet":
             sounds = self.resizer(sounds)
-            # sounds, labels = self.mixup_data(sounds, labels)
+            sounds, labels = self.mixup_data(sounds, labels)
 
         with self.ctx:
             out = model(sounds)
@@ -121,22 +109,6 @@ class Trainer:
         optimizer.zero_grad(set_to_none=True)
 
         return out, labels, loss
-
-    def get_lr(self, iteration):
-        config = self.config
-        # 1) linear warmup for warmup_iters steps
-        if iteration < config.warmup_iters:
-            return config.lr * iteration / config.warmup_iters
-        # 2) if it > lr_decay_iters, return min learning rate
-        if iteration > config.lr_decay_iters:
-            return config.min_lr
-        # 3) in between, use cosine decay down to min learning rate
-        decay_ratio = (iteration - config.warmup_iters) / (
-            config.lr_decay_iters - config.warmup_iters
-        )
-        assert 0 <= decay_ratio <= 1
-        coeff = 0.5 * (1.0 + math.cos(math.pi * decay_ratio))  # coeff ranges 0..1
-        return config.min_lr + coeff * (config.lr - config.min_lr)
 
     def get_accuracy(self, out, target):
         _, predict = torch.max(out, dim=-1)
@@ -153,7 +125,7 @@ class Trainer:
         return mAP, AUC
 
     @torch.no_grad()
-    def validate(self, cmodel, iteration):
+    def validate(self, cmodel):
         cmodel.eval()
 
         accumu_out = []
@@ -224,7 +196,7 @@ class Trainer:
             )
             val_ds = AudioSetDataset(
                 config,
-                "/data/audioset/eval00.pkl",
+                "/data/audioset/eval*.pkl",
                 "/data/audioset/eval_segments.csv",
                 validation=True,
             )
@@ -243,7 +215,7 @@ class Trainer:
 
         self.val_loader = data.DataLoader(
             val_ds,
-            self.config.batch_size,
+            self.config.batch_size * 8,
             num_workers=self.config.num_workers,
             shuffle=False,
             pin_memory=True,
@@ -259,7 +231,7 @@ class Trainer:
             if self.config.dataset_name == "ESC-50"
             else "timm/deit_base_distilled_patch16_384.fb_in1k"
         )
-        drop_rate = 0.3 if self.config.dataset_name == "ESC-50" else 0.0
+        drop_rate = 0.3 if self.config.dataset_name == "ESC-50" else 0.1
         model = (
             timm.create_model(
                 model_name,
@@ -276,25 +248,19 @@ class Trainer:
             checkpoint = torch.load(resume, map_location=self.device_type)
             state_dict = checkpoint["model"]
             # self.config = TrainConfig(**checkpoint["train_config"])
-            # iter_start = checkpoint["iteration"] + 1
-            iter_start = 1
             self.config.lr = 1e-3
             self.config.min_lr = 1e-4
             self.config.batch_size = 16
-            self.config.max_iters = self.config.lr_decay_iters = 4000 + 1
             model.load_state_dict(state_dict)
-            print(f"Resume from {iter_start - 1} for training...")
-        else:
-            iter_start = 1
+            print("Resume training...")
 
         self.load_dataset()
-        return model, iter_start
+        return model
 
     def train(self, resume="", learning_rate=None):
-        model, iter_start = self.init(resume)
+        model = self.init(resume)
         if learning_rate:
             self.config.lr = learning_rate
-            iter_start = 0
         cmodel = torch.compile(model)
         if self.config.dataset_name == "ESC-50":
             optimizer = torch.optim.SGD(
@@ -313,63 +279,75 @@ class Trainer:
             accumu_out = []
             accumu_labels = []
 
-        for iteration in range(iter_start, self.config.max_iters):
-            lr = self.get_lr(iteration)
-            for param_group in optimizer.param_groups:
-                param_group["lr"] = lr
+        scheduler = torch.optim.lr_scheduler.MultiStepLR(
+            optimizer, list(range(1, self.config.epochs, 5)), gamma=0.5
+        )
+        '''scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(
+            optimizer,
+            "max",
+            factor=0.5,
+            patience=2,
+            threshold=0.005,
+            threshold_mode="abs",
+        )'''
 
-            out, labels, loss = self.train_step(cmodel, optimizer)
-            if self.config.dataset_name == "AudioSet":
-                accumu_out.append(out.cpu().detach())
-                accumu_labels.append(labels.cpu().detach())
+        log_iters = len(self.train_loader) // 5
 
-            if iteration % self.config.log_iters == 0 and iteration > 0:
-                metrics = OrderedDict(
-                    [
-                        ("loss", loss.item()),
-                    ],
-                )
-                if self.config.dataset_name == "ESC-50":
-                    metrics["accuracy"] = self.get_accuracy(out, labels)
-                '''elif self.config.dataset_name == "AudioSet":
-                    out = torch.cat(accumu_labels)
-                    labels = torch.cat(accumu_labels)
-                    metrics["mAP"], metrics["AUC"] = self.get_auc(out, labels)'''
+        for epoch in range(self.config.epochs):
+            for iteration, batch in enumerate(self.train_loader):
+                out, labels, loss = self.train_step(cmodel, optimizer, batch)
+                if self.config.dataset_name == "AudioSet":
+                    accumu_out.append(out.cpu().detach())
+                    accumu_labels.append(labels.cpu().detach())
 
-                epoch = iteration // len(self.train_loader)
-                now = time.time()
-                duration = now - begin
-                begin = now
-                messages = [f"[{epoch:03d}: {iteration:06d}]"]
-                for name, val in metrics.items():
-                    messages.append(f"{name}: {val:.3f}")
-                messages.append(f"lr: {lr:.3e}")
-                messages.append(f"time: {duration:.1f}")
-                print(" ".join(messages), flush=True)
-            if iteration % self.config.eval_iters == 0 and iteration > 0:
-                accumulator = self.validate(cmodel, iteration)
-                main_metric = (
-                    "accuracy" if self.config.dataset_name == "ESC-50" else "mAP"
-                )
-                val_metric = accumulator[main_metric]
-                best_metric = max(best_metric, val_metric)
-                checkpoint = {
-                    "model": model.state_dict(),
-                    "iteration": iteration,
-                    "train_config": asdict(self.config),
-                    "eval_metric": val_metric,
-                }
-                torch.save(
-                    checkpoint,
-                    os.path.join(
-                        CKPT_DIR,
-                        f"{iteration}.pt",
-                    ),
-                )
-                messages = ["[Val]"]
-                for name, val in accumulator.items():
-                    messages.append(f"{name}: {val:.3f}")
-                print(" ".join(messages), flush=True)
+                if iteration % log_iters == 0 and iteration > 0:
+                    metrics = OrderedDict(
+                        [
+                            ("loss", loss.item()),
+                        ],
+                    )
+                    if self.config.dataset_name == "ESC-50":
+                        metrics["accuracy"] = self.get_accuracy(out, labels)
+                    elif self.config.dataset_name == "AudioSet":
+                        out = torch.cat(accumu_out)
+                        labels = torch.cat(accumu_labels)
+                        # metrics["mAP"], metrics["AUC"] = self.get_auc(out, labels)
+                        accumu_out = []
+                        accumu_labels = []
+
+                    now = time.time()
+                    duration = now - begin
+                    begin = now
+                    messages = [f"[{epoch:03d}: {iteration:06d}]"]
+                    for name, val in metrics.items():
+                        messages.append(f"{name}: {val:.3f}")
+                    lr = optimizer.param_groups[0]["lr"]
+                    messages.append(f"lr: {lr:.3e}")
+                    messages.append(f"time: {duration:.1f}")
+                    print(" ".join(messages), flush=True)
+
+            accumulator = self.validate(cmodel)
+            main_metric = "accuracy" if self.config.dataset_name == "ESC-50" else "mAP"
+            val_metric = accumulator[main_metric]
+            best_metric = max(best_metric, val_metric)
+            checkpoint = {
+                "model": model.state_dict(),
+                "epoch": epoch,
+                "train_config": asdict(self.config),
+                "eval_metric": val_metric,
+            }
+            torch.save(
+                checkpoint,
+                os.path.join(
+                    CKPT_DIR,
+                    f"{iteration}.pt",
+                ),
+            )
+            messages = ["[Val]"]
+            for name, val in accumulator.items():
+                messages.append(f"{name}: {val:.3f}")
+            print(" ".join(messages), flush=True)
+            scheduler.step()
 
         print("Best validating metric:", best_metric)
         return best_metric
@@ -397,7 +375,5 @@ if __name__ == "__main__":
         config.num_workers = 16
         config.lr = 1e-4
         config.min_lr = 5e-6
-        config.lr_decay_iters = 12000 + 1
-        config.max_iters = config.lr_decay_iters
         trainer = Trainer(config)
         trainer.train()

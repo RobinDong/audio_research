@@ -13,9 +13,7 @@ class TrainConfig:
     grad_clip: float = 10.0
     log_iters: int = 100
     eval_iters: int = 500
-    warmup_iters: int = 1 * eval_iters
-    lr_decay_iters: int = 12000 + 1
-    max_iters: int = lr_decay_iters
+    epochs: int = 25
     num_classes: int = 50
     dataset_name: str = "ESC-50"
     eval_prefix: str = "1"  # only for ESC-50
