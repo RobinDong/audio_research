@@ -61,7 +61,7 @@ class Trainer:
 
         self.supcon_loss = SupConLoss()
         self.loss_fn = nn.BCEWithLogitsLoss()
-        self.resizer = torchvision.transforms.Resize((384, 384))
+        # self.resizer = torchvision.transforms.Resize((384, 384))
 
     def criterion(self, outputs, targets):
         if self.config.dataset_name == "ESC-50":
@@ -94,7 +94,8 @@ class Trainer:
         if self.config.dataset_name == "ESC-50":
             sounds, labels = self.cm(sounds, labels)
         elif self.config.dataset_name == "AudioSet":
-            sounds = self.resizer(sounds)
+            # sounds = self.resizer(sounds)
+            sounds = sounds.transpose(2, 3)
             sounds, labels = self.mixup_data(sounds, labels)
 
         with self.ctx:
@@ -138,7 +139,8 @@ class Trainer:
             if self.config.dataset_name == "ESC-50":
                 labels = F.one_hot(labels, self.config.num_classes)
             elif self.config.dataset_name == "AudioSet":
-                sounds = self.resizer(sounds)
+                # sounds = self.resizer(sounds)
+                sounds = sounds.transpose(2, 3)
             # forward
             with self.ctx:
                 out = cmodel(sounds)
@@ -235,6 +237,7 @@ class Trainer:
         model = (
             timm.create_model(
                 model_name,
+                img_size = (128, 998),
                 in_chans=1,
                 num_classes=self.config.num_classes,
                 drop_rate=drop_rate,
@@ -249,7 +252,6 @@ class Trainer:
             state_dict = checkpoint["model"]
             # self.config = TrainConfig(**checkpoint["train_config"])
             self.config.lr = 1e-3
-            self.config.min_lr = 1e-4
             self.config.batch_size = 16
             model.load_state_dict(state_dict)
             print("Resume training...")
@@ -282,14 +284,6 @@ class Trainer:
         scheduler = torch.optim.lr_scheduler.MultiStepLR(
             optimizer, list(range(1, self.config.epochs, 5)), gamma=0.5
         )
-        '''scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(
-            optimizer,
-            "max",
-            factor=0.5,
-            patience=2,
-            threshold=0.005,
-            threshold_mode="abs",
-        )'''
 
         log_iters = len(self.train_loader) // 5
 
@@ -373,7 +367,6 @@ if __name__ == "__main__":
         config.num_classes = 527
         config.batch_size = 16
         config.num_workers = 16
-        config.lr = 1e-4
-        config.min_lr = 5e-6
+        config.lr = 2e-4
         trainer = Trainer(config)
         trainer.train()

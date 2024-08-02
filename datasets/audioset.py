@@ -20,7 +20,7 @@ from audiomentations import (
 RAW_LENGTH = 480000
 TARGET_LENGTH = 998
 AUDIO_RATIO = 0.8
-AUDIO_WIN = int(TARGET_LENGTH * AUDIO_RATIO)
+AUDIO_WIN = TARGET_LENGTH
 AUG_P = 0.5
 NUM_CLASSES = 527
 MIXUP_ALPHA = 10.0
@@ -160,14 +160,14 @@ class AudioSetDataset(Dataset):
         if sound is None:
             return None, None
         label = self.index_to_label(index)
-        """if not self.validation:  # mixup
+        '''if not self.validation:  # mixup
             mixup_idx = np.random.randint(0, len(self.file_lst))
             sound2, sr2 = self.index_to_sound(mixup_idx)
             if sound2 is not None:
                 label2 = self.index_to_label(mixup_idx)
                 lam = np.random.beta(MIXUP_ALPHA, MIXUP_ALPHA)
                 sound = sound * lam + sound2 * (1 - lam)
-                label = label * lam + label2 * (1 - lam)"""
+                label = label * lam + label2 * (1 - lam)'''
 
         """mean, std = torch.std_mean(sound, dim=1)
         sound = (sound - mean) / std"""
@@ -180,6 +180,7 @@ class AudioSetDataset(Dataset):
             fbank = self.timem(fbank)
             fbank = fbank.squeeze(0)
             fbank = torch.transpose(fbank, 0, 1)
+
         return fbank, label
 
     @staticmethod
