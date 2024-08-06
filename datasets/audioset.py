@@ -24,6 +24,7 @@ AUDIO_WIN = TARGET_LENGTH
 AUG_P = 0.5
 NUM_CLASSES = 527
 MIXUP_ALPHA = 10.0
+MELS = 128
 
 
 class AudioSetDataset(Dataset):
@@ -56,7 +57,7 @@ class AudioSetDataset(Dataset):
                 augs.append(aug)
             self.augment = Compose(augs)
 
-            self.freqm = torchaudio.transforms.FrequencyMasking(128 * 0.2)
+            self.freqm = torchaudio.transforms.FrequencyMasking(MELS * 0.2)
             self.timem = torchaudio.transforms.TimeMasking(AUDIO_WIN * 0.2)
 
     def traverse_lines(self, lines):
@@ -124,7 +125,7 @@ class AudioSetDataset(Dataset):
             sample_frequency=sr,
             use_energy=False,
             window_type="hanning",
-            num_mel_bins=128,
+            num_mel_bins=MELS,
             dither=0.0,
             frame_shift=10,
         )
@@ -160,14 +161,14 @@ class AudioSetDataset(Dataset):
         if sound is None:
             return None, None
         label = self.index_to_label(index)
-        '''if not self.validation:  # mixup
+        """if not self.validation and np.random.random() < 0.5:  # mixup
             mixup_idx = np.random.randint(0, len(self.file_lst))
             sound2, sr2 = self.index_to_sound(mixup_idx)
             if sound2 is not None:
                 label2 = self.index_to_label(mixup_idx)
                 lam = np.random.beta(MIXUP_ALPHA, MIXUP_ALPHA)
                 sound = sound * lam + sound2 * (1 - lam)
-                label = label * lam + label2 * (1 - lam)'''
+                label = label * lam + label2 * (1 - lam)"""
 
         """mean, std = torch.std_mean(sound, dim=1)
         sound = (sound - mean) / std"""

@@ -4,7 +4,6 @@ import json
 import glob
 import time
 import timm
-import torchvision
 import contextlib
 import multiprocessing
 import numpy as np
@@ -22,7 +21,7 @@ from config import TrainConfig
 from stats import calculate_stats
 from supcon_loss import SupConLoss
 from datasets.esc50 import ESC50Dataset
-from datasets.audioset import AudioSetDataset
+from datasets.audioset import AudioSetDataset, MELS
 
 SEED = 20240605
 CKPT_DIR = "out"
@@ -88,7 +87,7 @@ class Trainer:
 
     def train_step(self, model, optimizer, batch):
         sounds, labels = batch
-        # shape of 'sounds' for AudioSet [batch_size, 1, 1024, 128]
+        # shape of 'sounds' for AudioSet [batch_size, 1, 1024, MELS]
         sounds = sounds.unsqueeze(1).to(self.device_type).to(self.dtype)
         labels = labels.to(self.device_type)
         if self.config.dataset_name == "ESC-50":
@@ -237,7 +236,7 @@ class Trainer:
         model = (
             timm.create_model(
                 model_name,
-                img_size = (128, 998),
+                img_size=(MELS, 998),
                 in_chans=1,
                 num_classes=self.config.num_classes,
                 drop_rate=drop_rate,
@@ -250,7 +249,6 @@ class Trainer:
         if resume:
             checkpoint = torch.load(resume, map_location=self.device_type)
             state_dict = checkpoint["model"]
-            # self.config = TrainConfig(**checkpoint["train_config"])
             self.config.lr = 1e-3
             self.config.batch_size = 16
             model.load_state_dict(state_dict)
@@ -286,9 +284,10 @@ class Trainer:
         )
 
         log_iters = len(self.train_loader) // 5
+        iteration = 0
 
         for epoch in range(self.config.epochs):
-            for iteration, batch in enumerate(self.train_loader):
+            for batch in self.train_loader:
                 out, labels, loss = self.train_step(cmodel, optimizer, batch)
                 if self.config.dataset_name == "AudioSet":
                     accumu_out.append(out.cpu().detach())
@@ -319,6 +318,7 @@ class Trainer:
                     messages.append(f"lr: {lr:.3e}")
                     messages.append(f"time: {duration:.1f}")
                     print(" ".join(messages), flush=True)
+                iteration += 1
 
             accumulator = self.validate(cmodel)
             main_metric = "accuracy" if self.config.dataset_name == "ESC-50" else "mAP"
