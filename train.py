@@ -19,9 +19,9 @@ from torchvision.transforms import v2
 
 from config import TrainConfig
 from stats import calculate_stats
-from supcon_loss import SupConLoss
 from datasets.esc50 import ESC50Dataset
 from datasets.audioset import AudioSetDataset, MELS
+from model import transfer_model
 
 SEED = 20240605
 CKPT_DIR = "out"
@@ -58,7 +58,6 @@ class Trainer:
         self.mixup = v2.MixUp(num_classes=config.num_classes)
         self.cm = v2.RandomChoice([self.cutmix, self.mixup])
 
-        self.supcon_loss = SupConLoss()
         self.loss_fn = nn.BCEWithLogitsLoss()
         # self.resizer = torchvision.transforms.Resize((384, 384))
 
@@ -233,19 +232,18 @@ class Trainer:
             else "timm/deit_base_distilled_patch16_384.fb_in1k"
         )
         drop_rate = 0.3 if self.config.dataset_name == "ESC-50" else 0.1
-        model = (
-            timm.create_model(
-                model_name,
-                img_size=(MELS, 998),
-                in_chans=1,
-                num_classes=self.config.num_classes,
-                drop_rate=drop_rate,
-                drop_path_rate=drop_rate,
-                pretrained=True,
-            )
-            .to(self.dtype)
-            .to(self.device_type)
+        model = timm.create_model(
+            model_name,
+            # img_size=(MELS, 998),
+            in_chans=1,
+            num_classes=self.config.num_classes,
+            drop_rate=drop_rate,
+            drop_path_rate=drop_rate,
+            pretrained=True,
         )
+        transfer_model(model)
+        model = model.to(self.dtype).to(self.device_type)
+
         if resume:
             checkpoint = torch.load(resume, map_location=self.device_type)
             state_dict = checkpoint["model"]
