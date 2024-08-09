@@ -229,9 +229,9 @@ class Trainer:
         model_name = (
             "efficientnet_b0"
             if self.config.dataset_name == "ESC-50"
-            else "timm/deit_base_distilled_patch16_384.fb_in1k"
+            else "deit_base_distilled_patch16_384.fb_in1k"
         )
-        drop_rate = 0.3 if self.config.dataset_name == "ESC-50" else 0.1
+        drop_rate = 0.3 if self.config.dataset_name == "ESC-50" else 0.0
         model = timm.create_model(
             model_name,
             # img_size=(MELS, 998),
