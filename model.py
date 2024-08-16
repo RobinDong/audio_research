@@ -1,4 +1,5 @@
 import torch
+import timm
 
 EMBED_DIM = 768
 
@@ -18,6 +19,11 @@ class PatchEmbed(torch.nn.Module):
         return self.proj(inp).flatten(2).transpose(1, 2)
 
 
+class MyTranspose(torch.nn.Module):
+    def forward(self, x):
+        return torch.transpose(x, 1, 2)
+
+
 def get_shape(fstride, tstride, input_fdim, input_tdim):
     test_input = torch.randn(1, 1, input_fdim, input_tdim)
     test_proj = torch.nn.Conv2d(
@@ -30,10 +36,27 @@ def get_shape(fstride, tstride, input_fdim, input_tdim):
 
 
 def transfer_model(model, fstride=10, tstride=10, input_fdim=128, input_tdim=998):
-    model.patch_embed = PatchEmbed(model, fstride, tstride)
+    # model.patch_embed = PatchEmbed(model, fstride, tstride)
+    drop_rate = 0.0
+    pre_model = timm.create_model(
+        "convnext_small_in22ft1k",
+        # img_size=(MELS, 998),
+        in_chans=1,
+        drop_rate=drop_rate,
+        drop_path_rate=drop_rate,
+        pretrained=True,
+    )
+    # Before Pool: [16, 768, 4, 31]
+    # After  Pool: [16, 768, 1, 1]
+    layers = list(pre_model.children())[:-2]
+    layers.append(torch.nn.Flatten(start_dim=2))
+    layers.append(MyTranspose())
+    model.patch_embed = torch.nn.Sequential(*layers)
+
     original_num_patches = 576
     oringal_hw = 384 // 16
-    f_dim, t_dim = get_shape(fstride, tstride, input_fdim, input_tdim)
+    # f_dim, t_dim = get_shape(fstride, tstride, input_fdim, input_tdim)
+    f_dim, t_dim = 4, 31
     num_patches = f_dim * t_dim
 
     new_pos_embed = (
