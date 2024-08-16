@@ -189,29 +189,47 @@ class Trainer:
                 config, list(val_set), self.config.meta_dir, validation=True
             )
         elif self.config.dataset_name == "AudioSet":
-            train_ds = AudioSetDataset(
-                config,
-                "/data/audioset/bal_train*.pkl",
-                "/data/audioset/balanced_train_segments.csv",
-            )
-            val_ds = AudioSetDataset(
-                config,
-                "/data/audioset/eval*.pkl",
-                "/data/audioset/eval_segments.csv",
-                validation=True,
-            )
-
-        self.train_loader = data.DataLoader(
-            train_ds,
-            self.config.batch_size,
-            num_workers=self.config.num_workers,
-            shuffle=True,
-            pin_memory=True,
-            prefetch_factor=4,
-            persistent_workers=True,
-            collate_fn=AudioSetDataset.my_collate,
-        )
+            if len(sys.argv) > 3 and sys.argv[3] == "full":
+                train_ds = AudioSetDataset(
+                    config,
+                    "/data/audioset/unbal/unbal_train0*.pkl",
+                    "/data/audioset/unbal/unbalanced_train_segments.csv",
+                    sampler=True,
+                )
+                self.train_loader = data.DataLoader(
+                    train_ds,
+                    self.config.batch_size,
+                    sampler=train_ds.get_sampler(),
+                    num_workers=self.config.num_workers,
+                    pin_memory=True,
+                    prefetch_factor=4,
+                    persistent_workers=True,
+                    collate_fn=AudioSetDataset.my_collate,
+                )
+            else:
+                train_ds = AudioSetDataset(
+                    config,
+                    "/data/audioset/bal_train*.pkl",
+                    "/data/audioset/balanced_train_segments.csv",
+                )
+                self.train_loader = data.DataLoader(
+                    train_ds,
+                    self.config.batch_size,
+                    num_workers=self.config.num_workers,
+                    shuffle=True,
+                    pin_memory=True,
+                    prefetch_factor=4,
+                    persistent_workers=True,
+                    collate_fn=AudioSetDataset.my_collate,
+                )
         self.train_batch_iter = iter(self.train_loader)
+
+        val_ds = AudioSetDataset(
+            config,
+            "/data/audioset/eval*.pkl",
+            "/data/audioset/eval_segments.csv",
+            validation=True,
+        )
 
         self.val_loader = data.DataLoader(
             val_ds,

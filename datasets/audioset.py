@@ -8,8 +8,8 @@ import audiomentations  # noqa: F401
 import numpy as np
 
 from pathlib import Path
-from collections import defaultdict
-from torch.utils.data import Dataset
+from collections import defaultdict, Counter
+from torch.utils.data import Dataset, WeightedRandomSampler
 from audiomentations import (
     Compose,
     Shift,
@@ -28,7 +28,14 @@ MELS = 128
 
 
 class AudioSetDataset(Dataset):
-    def __init__(self, config, data_dir: str, meta_file: str, validation: bool = False):
+    def __init__(
+        self,
+        config,
+        data_dir: str,
+        meta_file: str,
+        sampler=False,
+        validation: bool = False,
+    ):
         self.parent_data_dir = Path(data_dir).parent
 
         idx_lst = glob.glob(f"{data_dir}")
@@ -41,6 +48,7 @@ class AudioSetDataset(Dataset):
         print("file_lst:", len(self.file_lst))
 
         self.validation = validation
+
         self.name_to_labels = self.load_meta(meta_file)
 
         if not validation:
@@ -60,11 +68,33 @@ class AudioSetDataset(Dataset):
             self.freqm = torchaudio.transforms.FrequencyMasking(MELS * 0.2)
             self.timem = torchaudio.transforms.TimeMasking(AUDIO_WIN * 0.2)
 
+        if sampler:
+            self.sample_weight = self.load_sample_weight()
+
+    def get_sampler(self):
+        return WeightedRandomSampler(
+            self.sample_weight, len(self.sample_weight), replacement=True
+        )
+
+    def load_sample_weight(self):
+        label_count = Counter()
+        for filename, _, _, _ in self.file_lst:
+            labels = self.name_to_labels[filename]
+            for label in labels:
+                label_count[label] += 1
+
+        sample_weight = np.zeros(len(self.file_lst))
+
+        for index, tup in enumerate(self.file_lst):
+            filename = tup[0]
+            labels = self.name_to_labels[filename]
+            for label in labels:
+                sample_weight[index] += 1000.0 / label_count[label]
+        return sample_weight
+
     def traverse_lines(self, lines):
         filenames, labels = [], []
         for line in lines:
-            if line[0] == "#":
-                continue
             filenames.append(line.split(",")[0])
             labels.append(line.split('"')[1].split(","))
         return filenames, labels
@@ -72,8 +102,10 @@ class AudioSetDataset(Dataset):
     def load_meta(self, meta_file: str) -> dict[str, int]:
         name_to_labels = {}
         label_map = {}
-        with open(meta_file, "r") as fp:
-            lines = fp.readlines()
+
+        with open(meta_file, "r", encoding="utf-8") as fp:
+            lines = [line for line in fp.readlines() if line[0] != "#"]
+
             filenames, labels = self.traverse_lines(lines)
             uniq_labels = set()
             # build label map {label_name -> label_id}
